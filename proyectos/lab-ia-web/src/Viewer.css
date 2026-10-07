@@ -140,10 +140,10 @@
   padding: 9px 20px;
   border: 0;
   border-radius: 6px;
-  background: #e3e9f1;
-  color: #536277;
+  background: #385679;
+  color: #ffffff;
   font-weight: 600;
-  cursor: not-allowed;
+  cursor: pointer;
 }
 
 .composer-note {
@@ -243,5 +243,77 @@
 @media (max-width: 680px) {
   .section-content {
     padding: 24px 20px;
+  }
+}
+
+.composer-footer button:disabled {
+  background: #e3e9f1;
+  color: #536277;
+  cursor: not-allowed;
+}
+
+.chat-area.has-messages {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 20px;
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 28px 32px;
+}
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.chat-message {
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.chat-message.user {
+  background: #edf2f8;
+  border-color: #d9e2ef;
+  margin-left: min(8%, 48px);
+}
+
+.message-author {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #385679;
+}
+
+.chat-message p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+
+.chat-status {
+  color: var(--muted);
+}
+
+.chat-error {
+  padding: 14px 18px;
+  border: 1px solid #e7bcbc;
+  border-radius: 8px;
+  background: #fff3f3;
+  color: #913333;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 680px) {
+  .chat-area.has-messages {
+    padding: 24px 16px;
   }
 }
