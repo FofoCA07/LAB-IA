@@ -14,17 +14,26 @@ if [[ $# -ne 1 ]]; then
 fi
 
 requested_workspace=$1
-if [[ "$requested_workspace" =~ ^[[:alpha:]]: ]]; then
-    printf 'Error: usa una ruta de WSL; las rutas de Windows no se convierten todavía.\n' >&2
+workspace_path=$requested_workspace
+if [[ "$workspace_path" =~ ^[a-zA-Z]: ]]; then
+    if [[ "${workspace_path:2:1}" != '\' && "${workspace_path:2:1}" != '/' ]]; then
+        printf 'Error: la ruta de Windows debe ser absoluta, por ejemplo C:\\Users\\usuario\\Proyecto.\n' >&2
+        exit 1
+    fi
+    drive=${workspace_path:0:1}
+    windows_path=${workspace_path:2}
+    workspace_path="/mnt/${drive,,}${windows_path//\\//}"
+elif [[ "$workspace_path" != /* && "$workspace_path" == *\\* ]]; then
+    printf 'Error: las rutas relativas de Windows no están permitidas.\n' >&2
     exit 1
 fi
 
-if [[ ! -d "$requested_workspace" ]]; then
+if [[ ! -d "$workspace_path" ]]; then
     printf 'Error: la ruta no existe o no es un directorio: %s\n' "$requested_workspace" >&2
     exit 1
 fi
 
-workspace=$(cd -- "$requested_workspace" && pwd -P)
+workspace=$(cd -- "$workspace_path" && pwd -P)
 script_path=$(realpath -e -- "${BASH_SOURCE[0]}")
 script_dir=$(dirname -- "$script_path")
 lab_root=$(cd -- "$script_dir/.." && pwd -P)
