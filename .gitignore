@@ -45,3 +45,9 @@ Thumbs.db
 *.db
 *.sqlite
 *.sqlite3
+
+# Vite cache
+.vite/
+
+# Archivos de prueba temporales
+proyectos/prueba-permisos.txt
