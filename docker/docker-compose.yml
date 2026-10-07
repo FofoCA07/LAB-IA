@@ -13,7 +13,7 @@ services:
     working_dir: /workspace
 
     volumes:
-      - ../:/workspace
+      - "${LAB_WORKSPACE:-../}:/workspace"
       - ../runtime:/home/adolf
       - ../agentes/agents:/home/adolf/.config/opencode/agents:ro
       - ./opencode.json:/home/adolf/.config/opencode/opencode.json:ro
