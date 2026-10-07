@@ -22,25 +22,27 @@ La ruta debe existir y corresponder a un directorio.
 
 # Proyectos en Windows
 
-Una ruta de Windows como:
+Ahora se puede abrir directamente un proyecto con su ruta absoluta de Windows:
 
-```text
-C:\Users\adolf\Documents\MiProyecto
+```bash
+lab-open 'C:\Users\adolf\Documents\MiProyecto'
 ```
 
-equivale en WSL, con la unidad C montada en su ubicación habitual, a:
+`lab-open` convierte automáticamente esa ruta a su equivalente en WSL:
 
 ```text
 /mnt/c/Users/adolf/Documents/MiProyecto
 ```
 
-El proyecto se abre usando esa ruta de WSL:
+También sigue siendo válida la forma manual con `/mnt/c/...`:
 
 ```bash
 lab-open /mnt/c/Users/adolf/Documents/MiProyecto
 ```
 
-`lab-open` todavía no convierte automáticamente rutas `C:\...`; las rechaza y solicita una ruta de WSL.
+El launcher acepta rutas absolutas con letras de unidad como `C:` o `D:` seguidas de `\` o `/`. Convierte la letra a minúscula y sustituye los backslashes (`\`) por slashes (`/`): por ejemplo, `D:\Proyectos\MiApp` se convierte en `/mnt/d/Proyectos/MiApp`. La unidad debe estar montada en su ubicación habitual bajo `/mnt`.
+
+Las rutas Windows relativas, como `C:MiProyecto` o `Proyectos\MiApp`, se rechazan. Usa comillas simples para conservar los backslashes en Bash; las rutas con espacios deben ir entre comillas.
 
 # Qué hace lab-open
 
@@ -82,7 +84,7 @@ lab-open "/mnt/c/Users/adolf/Documents/Mi Proyecto"
 # Flujo recomendado
 
 1. Identificar la ruta del proyecto.
-2. Convertirla a `/mnt/...` si vive en Windows.
+2. Si vive en Windows, usar su ruta absoluta entre comillas simples o su equivalente en `/mnt/...`.
 3. Ejecutar `lab-open` con la ruta correspondiente.
 4. Comprobar que el workspace montado sea el esperado y OpenCode esté en estado `running`.
 5. Abrir OpenCode y trabajar normalmente sobre `/workspace`.
@@ -102,7 +104,13 @@ WSL:
 lab-open /home/adolf/proyectos/MiAPI
 ```
 
-Windows:
+Windows con ruta `C:\...`:
+
+```bash
+lab-open 'C:\Users\adolf\Documents\FacturacionApp'
+```
+
+Windows usando `/mnt/c/...`:
 
 ```bash
 lab-open /mnt/c/Users/adolf/Documents/FacturacionApp
@@ -111,7 +119,7 @@ lab-open /mnt/c/Users/adolf/Documents/FacturacionApp
 Windows con espacios:
 
 ```bash
-lab-open "/mnt/c/Users/adolf/Documents/Proyecto Java"
+lab-open 'C:\Users\adolf\Documents\Proyecto Java'
 ```
 
 # Estado actual
@@ -127,7 +135,6 @@ Según las pruebas reportadas por el usuario, el soporte ya fue probado con:
 
 Quedan pendientes:
 
-- Aceptar rutas `C:\...` directamente y convertirlas automáticamente.
 - Incorporar un selector interactivo de proyectos.
 - Mantener un historial de workspaces recientes.
 - Evaluar una posible integración futura con una interfaz web.
