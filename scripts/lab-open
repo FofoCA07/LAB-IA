@@ -8,12 +8,66 @@ usage() {
     printf 'Ejemplo: %s "/mnt/c/Users/usuario/Mi proyecto"\n' "${0##*/}" >&2
 }
 
-if [[ $# -ne 1 ]]; then
+if [[ $# -gt 1 ]]; then
     usage
     exit 1
 fi
 
-requested_workspace=$1
+if [[ $# -eq 1 ]]; then
+    requested_workspace=$1
+else
+    selector_script_path=$(realpath -e -- "${BASH_SOURCE[0]}")
+    selector_script_dir=$(dirname -- "$selector_script_path")
+    selector_lab_root=$(cd -- "$selector_script_dir/.." && pwd -P)
+    selector_history_file="$selector_lab_root/runtime/recent-workspaces"
+    selectable_workspaces=()
+
+    if [[ -f "$selector_history_file" ]]; then
+        while IFS= read -r previous_workspace || [[ -n "$previous_workspace" ]]; do
+            [[ -d "$previous_workspace" ]] || continue
+            selectable_workspaces+=("$previous_workspace")
+            [[ ${#selectable_workspaces[@]} -lt 10 ]] || break
+        done < "$selector_history_file"
+    fi
+
+    requested_workspace=''
+    if [[ ${#selectable_workspaces[@]} -gt 0 ]]; then
+        printf 'Workspaces recientes:\n'
+        for index in "${!selectable_workspaces[@]}"; do
+            printf '%s) %s\n' "$((index + 1))" "${selectable_workspaces[index]}"
+        done
+        manual_option=$((${#selectable_workspaces[@]} + 1))
+        printf '%s) Escribir otra ruta\n' "$manual_option"
+
+        while true; do
+            printf 'Selecciona una opción: '
+            if ! IFS= read -r selection; then
+                printf '\nError: no se pudo leer la selección.\n' >&2
+                exit 1
+            fi
+            if [[ "$selection" == "$manual_option" ]]; then
+                break
+            fi
+            for index in "${!selectable_workspaces[@]}"; do
+                if [[ "$selection" == "$((index + 1))" ]]; then
+                    requested_workspace=${selectable_workspaces[index]}
+                    break
+                fi
+            done
+            [[ -z "$requested_workspace" ]] || break
+            printf 'Error: selecciona un número entre 1 y %s.\n' "$manual_option" >&2
+        done
+    fi
+
+    if [[ -z "$requested_workspace" ]]; then
+        printf 'Ruta del proyecto: '
+        if ! IFS= read -r requested_workspace; then
+            printf '\nError: no se pudo leer la ruta.\n' >&2
+            exit 1
+        fi
+    fi
+fi
+
 workspace_path=$requested_workspace
 if [[ "$workspace_path" =~ ^[a-zA-Z]: ]]; then
     if [[ "${workspace_path:2:1}" != '\' && "${workspace_path:2:1}" != '/' ]]; then
