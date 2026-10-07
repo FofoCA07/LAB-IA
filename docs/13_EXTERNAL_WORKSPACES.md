@@ -44,9 +44,38 @@ El launcher acepta rutas absolutas con letras de unidad como `C:` o `D:` seguida
 
 Las rutas Windows relativas, como `C:MiProyecto` o `Proyectos\MiApp`, se rechazan. Usa comillas simples para conservar los backslashes en Bash; las rutas con espacios deben ir entre comillas.
 
+# Selector de workspaces recientes
+
+Para elegir un workspace del historial, ejecuta el comando sin argumentos:
+
+```bash
+lab-open
+```
+
+El selector lee `runtime/recent-workspaces` dentro de LAB-IA y muestra únicamente rutas que siguen existiendo y son directorios. Muestra como máximo 10 workspaces, numerados desde 1, y añade como última opción «Escribir otra ruta»:
+
+```text
+Workspaces recientes:
+1) /mnt/c/Users/adolf/Documents/FacturacionApp
+2) /home/adolf/proyectos/MiAPI
+3) Escribir otra ruta
+
+Selecciona una opción:
+```
+
+Escribe el número del workspace que quieres abrir. El selector valida la selección y vuelve a solicitarla si el número no es válido. Si eliges «Escribir otra ruta», solicita la ruta del proyecto. Si no existe el historial o no contiene ningún directorio que siga existiendo, solicita directamente una ruta.
+
+Una ruta escrita manualmente pasa por la misma conversión y validación normal de `lab-open`: admite rutas WSL y rutas absolutas de Windows, y debe corresponder a un directorio existente. Al escribirla en el selector, introduce los espacios y backslashes directamente, sin comillas de Bash.
+
+# Historial de workspaces
+
+El historial se actualiza solo después de abrir correctamente el workspace, verificar el estado de OpenCode y el montaje, y mostrar el contenido de `/workspace`. Guarda primero la ruta real del workspace más reciente, evita duplicados y conserva como máximo 10 entradas.
+
+Se guarda en `runtime/recent-workspaces`. Al vivir dentro de `runtime/`, no se versiona en Git.
+
 # Qué hace lab-open
 
-- Recibe exactamente una ruta y muestra el uso si la cantidad de argumentos es incorrecta.
+- Sin argumentos, permite elegir un workspace reciente o escribir otra ruta; con una ruta, abre directamente ese proyecto. Si recibe más de un argumento, muestra el uso y termina con error.
 - Valida que la ruta exista y sea un directorio.
 - Resuelve la ruta absoluta real, incluidos los enlaces simbólicos del directorio.
 - Localiza LAB-IA automáticamente a partir de la ubicación del propio script.
@@ -83,11 +112,10 @@ lab-open "/mnt/c/Users/adolf/Documents/Mi Proyecto"
 
 # Flujo recomendado
 
-1. Identificar la ruta del proyecto.
-2. Si vive en Windows, usar su ruta absoluta entre comillas simples o su equivalente en `/mnt/...`.
-3. Ejecutar `lab-open` con la ruta correspondiente.
-4. Comprobar que el workspace montado sea el esperado y OpenCode esté en estado `running`.
-5. Abrir OpenCode y trabajar normalmente sobre `/workspace`.
+1. Ejecutar `lab-open` sin argumentos y elegir un workspace del historial o escribir otra ruta.
+2. Como alternativa, proporcionar una ruta directamente: `lab-open /home/adolf/proyectos/MiProyecto`. Si vive en Windows, usar su ruta absoluta entre comillas simples o su equivalente en `/mnt/...`.
+3. Comprobar que el workspace montado sea el esperado y OpenCode esté en estado `running`.
+4. Abrir OpenCode y trabajar normalmente sobre `/workspace`.
 
 # Consideraciones
 
@@ -135,6 +163,5 @@ Según las pruebas reportadas por el usuario, el soporte ya fue probado con:
 
 Quedan pendientes:
 
-- Incorporar un selector interactivo de proyectos.
-- Mantener un historial de workspaces recientes.
+- Añadir mejoras adicionales al selector interactivo.
 - Evaluar una posible integración futura con una interfaz web.
