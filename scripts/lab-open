@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+trap 'status=$?; printf "Error: lab-open falló en la línea %s (código %s).\n" "$LINENO" "$status" >&2; exit "$status"' ERR
+
+usage() {
+    printf 'Uso: %s <ruta-del-proyecto>\n' "${0##*/}" >&2
+    printf 'Ejemplo: %s "/mnt/c/Users/usuario/Mi proyecto"\n' "${0##*/}" >&2
+}
+
+if [[ $# -ne 1 ]]; then
+    usage
+    exit 1
+fi
+
+requested_workspace=$1
+if [[ "$requested_workspace" =~ ^[[:alpha:]]: ]]; then
+    printf 'Error: usa una ruta de WSL; las rutas de Windows no se convierten todavía.\n' >&2
+    exit 1
+fi
+
+if [[ ! -d "$requested_workspace" ]]; then
+    printf 'Error: la ruta no existe o no es un directorio: %s\n' "$requested_workspace" >&2
+    exit 1
+fi
+
+workspace=$(cd -- "$requested_workspace" && pwd -P)
+script_path=$(realpath -e -- "${BASH_SOURCE[0]}")
+script_dir=$(dirname -- "$script_path")
+lab_root=$(cd -- "$script_dir/.." && pwd -P)
+docker_dir="$lab_root/docker"
+
+if [[ ! -f "$docker_dir/docker-compose.yml" ]]; then
+    printf 'Error: no se encontró docker/docker-compose.yml junto al launcher de LAB-IA.\n' >&2
+    exit 1
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+    printf 'Error: Docker no está disponible en PATH.\n' >&2
+    exit 1
+fi
+
+cd -- "$docker_dir"
+
+compose() {
+    LAB_WORKSPACE="$workspace" docker compose "$@"
+}
+
+printf 'Workspace solicitado: %s\n' "$requested_workspace"
+printf 'Workspace resuelto: %s\n' "$workspace"
+
+docker compose version
+compose up -d --force-recreate opencode
+
+container_id=$(compose ps -a -q opencode)
+if [[ -z "$container_id" ]]; then
+    printf 'Error: no se encontró el contenedor de OpenCode.\n' >&2
+    exit 1
+fi
+
+state=$(docker inspect --format '{{.State.Status}}' "$container_id")
+mounted_workspace=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "$container_id")
+
+printf 'Workspace montado: %s\n' "${mounted_workspace:-no encontrado}"
+printf 'Estado de OpenCode: %s\n' "$state"
+
+if [[ "$state" != running ]]; then
+    printf 'Error: el contenedor de OpenCode no está en ejecución.\n' >&2
+    exit 1
+fi
+
+if [[ "$mounted_workspace" != "$workspace" ]]; then
+    printf 'Error: el montaje de /workspace no coincide con el proyecto solicitado.\n' >&2
+    exit 1
+fi
+
+printf 'Contenido de /workspace:\n'
+compose exec -T opencode ls -la /workspace
