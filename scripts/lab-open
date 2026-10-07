@@ -85,3 +85,29 @@ fi
 
 printf 'Contenido de /workspace:\n'
 compose exec -T opencode ls -la /workspace
+
+runtime_dir="$lab_root/runtime"
+history_file="$runtime_dir/recent-workspaces"
+mkdir -p -- "$runtime_dir"
+
+recent_workspaces=("$workspace")
+if [[ -f "$history_file" ]]; then
+    while IFS= read -r previous_workspace || [[ -n "$previous_workspace" ]]; do
+        [[ -n "$previous_workspace" ]] || continue
+        duplicate=false
+        for recent_workspace in "${recent_workspaces[@]}"; do
+            if [[ "$previous_workspace" == "$recent_workspace" ]]; then
+                duplicate=true
+                break
+            fi
+        done
+        if [[ "$duplicate" == false ]]; then
+            recent_workspaces+=("$previous_workspace")
+        fi
+        if [[ ${#recent_workspaces[@]} -ge 10 ]]; then
+            break
+        fi
+    done < "$history_file"
+fi
+
+printf '%s\n' "${recent_workspaces[@]}" > "$history_file"
