@@ -1,0 +1,21 @@
+.Header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+}
+
+.Header .title {
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.Header .subtitle {
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.Header .separator {
+  border-bottom: 1px solid #333;
+  margin-top: 12px;
+}
