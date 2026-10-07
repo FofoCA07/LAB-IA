@@ -317,3 +317,28 @@
     padding: 24px 16px;
   }
 }
+
+.selected-agent {
+  border-color: #5479a6;
+  background: #edf2f8;
+}
+
+.agent-select {
+  margin-top: 16px;
+  padding: 8px 14px;
+  border: 1px solid #385679;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #385679;
+  cursor: pointer;
+}
+
+.agent-select[aria-pressed="true"] {
+  background: #385679;
+  color: #ffffff;
+}
+
+.agent-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

@@ -1,16 +1,9 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './Viewer.css';
 
-const agents = [
-  ['Software Architect', 'Diseña la arquitectura y organiza los componentes del software.'],
-  ['Senior Developer', 'Desarrolla soluciones y ayuda a mejorar el código.'],
-  ['Reviewer', 'Revisa la calidad, claridad y mantenibilidad del código.'],
-  ['Debugger', 'Analiza errores y ayuda a encontrar sus causas.'],
-  ['Docker Expert', 'Orienta sobre contenedores y entornos Docker.'],
-  ['SQL Expert', 'Ayuda a diseñar consultas y bases de datos relacionales.'],
-  ['Profesor', 'Explica conceptos y guía el aprendizaje paso a paso.'],
-  ['Prompt Engineer', 'Diseña y mejora instrucciones para modelos de inteligencia artificial.'],
-];
+function agentName(id) {
+  return id.split('-').map((word) => word === 'sql' ? 'SQL' : word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
 
 const configuration = [
   ['Modelo', 'Qwen3:8b'],
@@ -25,10 +18,72 @@ function Viewer({ activeSection }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const requestInProgress = useRef(false);
+  const [agents, setAgents] = useState([]);
+  const [agentsLoading, setAgentsLoading] = useState(true);
+  const [agentsError, setAgentsError] = useState('');
+  const [activeAgentId, setActiveAgentId] = useState('senior-developer');
+  const [loadedAgent, setLoadedAgent] = useState(null);
+  const [agentError, setAgentError] = useState('');
+  const [agentLoading, setAgentLoading] = useState(true);
+  const activeAgentName = agentName(activeAgentId);
+  const agentReady = !agentsLoading && !agentsError && !agentLoading
+    && loadedAgent?.id === activeAgentId && Boolean(loadedAgent.content.trim());
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadAgents() {
+      try {
+        const response = await fetch('/api/lab/api/agents', { signal: controller.signal });
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        if (!Array.isArray(data) || !data.every((agent) =>
+          typeof agent.id === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(agent.id)
+          && agent.filename === `${agent.id}.md`)) throw new Error();
+        if (!controller.signal.aborted) setAgents(data);
+      } catch {
+        if (!controller.signal.aborted) setAgentsError('No se pudo cargar la lista de agentes. Comprueba el servidor local y recarga la página.');
+      } finally {
+        if (!controller.signal.aborted) setAgentsLoading(false);
+      }
+    }
+    void loadAgents();
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadAgent() {
+      try {
+        const response = await fetch(`/api/lab/api/agents/${encodeURIComponent(activeAgentId)}`, { signal: controller.signal });
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        if (data.id !== activeAgentId || typeof data.content !== 'string' || !data.content.trim()) throw new Error();
+        if (!controller.signal.aborted) setLoadedAgent({ id: data.id, content: data.content });
+      } catch {
+        if (!controller.signal.aborted) setAgentError('No se pudieron cargar las instrucciones del agente. Comprueba el servidor local; el chat permanece bloqueado.');
+      } finally {
+        if (!controller.signal.aborted) setAgentLoading(false);
+      }
+    }
+    void loadAgent();
+    return () => controller.abort();
+  }, [activeAgentId]);
+
+  function selectAgent(id) {
+    if (requestInProgress.current || id === activeAgentId) return;
+    setActiveAgentId(id);
+    setLoadedAgent(null);
+    setAgentLoading(true);
+    setAgentError('');
+    setMessages([]);
+    setDraft('');
+    setError('');
+  }
+
 
   async function sendMessage() {
     const content = draft.trim();
-    if (!content || requestInProgress.current) return;
+    if (!content || requestInProgress.current || !agentReady) return;
 
     const nextMessages = [...messages, { role: 'user', content }];
     requestInProgress.current = true;
@@ -43,7 +98,7 @@ function Viewer({ activeSection }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'qwen3:8b',
-          messages: nextMessages,
+          messages: [{ role: 'system', content: loadedAgent.content }, ...nextMessages],
           stream: false,
         }),
       });
@@ -83,14 +138,31 @@ function Viewer({ activeSection }) {
         </header>
         <section className="section-content" aria-label={activeSection}>
           {activeSection === 'Agentes' && (
-            <ul className="agent-grid">
-              {agents.map(([name, description]) => (
-                <li className="section-card" key={name}>
-                  <h2>{name}</h2>
-                  <p>{description}</p>
-                </li>
-              ))}
-            </ul>
+            <>
+              <p className="section-description">Agente seleccionado: <strong>{activeAgentName}</strong></p>
+              {agentsLoading && <p role="status">Cargando agentes...</p>}
+              {agentsError && <p className="chat-error" role="alert">{agentsError}</p>}
+              {agentLoading && <p role="status">Cargando instrucciones del agente...</p>}
+              {agentError && <p className="chat-error" role="alert">{agentError}</p>}
+              {!agentsLoading && !agentsError && agents.length === 0 && <p>No hay agentes disponibles.</p>}
+              <ul className="agent-grid">
+                {agents.map((agent) => (
+                  <li className={`section-card${agent.id === activeAgentId ? ' selected-agent' : ''}`} key={agent.id}>
+                    <h2>{agentName(agent.id)}</h2>
+                    <p>{agent.filename}</p>
+                    <button
+                      className="agent-select"
+                      type="button"
+                      aria-pressed={agent.id === activeAgentId}
+                      disabled={isLoading}
+                      onClick={() => selectAgent(agent.id)}
+                    >
+                      {agent.id === activeAgentId ? 'Seleccionado' : 'Seleccionar'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
           {activeSection === 'Proyectos' && (
             <>
@@ -130,7 +202,7 @@ function Viewer({ activeSection }) {
       <header className="viewer-header">
         <div>
           <p className="viewer-eyebrow">Agente especializado</p>
-          <h1 id="viewer-title">Senior Developer</h1>
+          <h1 id="viewer-title">{activeAgentName}</h1>
         </div>
         <div className="workspace-label">
           <span>Workspace</span>
@@ -150,12 +222,15 @@ function Viewer({ activeSection }) {
           <ol className="chat-messages" aria-label="Mensajes" aria-live="polite">
             {messages.map((message, index) => (
               <li className={`chat-message ${message.role}`} key={index}>
-                <span className="message-author">{message.role === 'user' ? 'Tú' : 'Senior Developer'}</span>
+                <span className="message-author">{message.role === 'user' ? 'Tú' : activeAgentName}</span>
                 <p>{message.content}</p>
               </li>
             ))}
           </ol>
         )}
+        {(agentsLoading || agentLoading) && <p className="chat-status" role="status">Cargando agente...</p>}
+        {agentsError && <p className="chat-error" role="alert">{agentsError}</p>}
+        {agentError && <p className="chat-error" role="alert">{agentError}</p>}
         {isLoading && <p className="chat-status" role="status">Pensando...</p>}
         {error && <p className="chat-error" role="alert">{error}</p>}
       </section>
@@ -172,8 +247,8 @@ function Viewer({ activeSection }) {
             onKeyDown={handleMessageKeyDown}
           />
           <div className="composer-footer">
-            <span>Senior Developer · Qwen3:8b</span>
-            <button type="button" disabled={isLoading || !draft.trim()} onClick={sendMessage}>Enviar</button>
+            <span>{activeAgentName} · Qwen3:8b</span>
+            <button type="button" disabled={isLoading || !draft.trim() || !agentReady} onClick={sendMessage}>Enviar</button>
           </div>
         </div>
         <p className="composer-note">Enter para enviar · Shift+Enter para una nueva línea. Conversación guardada solo durante esta sesión.</p>
