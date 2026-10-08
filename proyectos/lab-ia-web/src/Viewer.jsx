@@ -5,6 +5,30 @@ function agentName(id) {
   return id.split('-').map((word) => word === 'sql' ? 'SQL' : word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }
 
+function conversationTitle(content) {
+  const characters = Array.from(content.trim());
+  const title = characters.slice(0, 60).join('');
+  if (characters.length <= 60 || /\s/.test(characters[60])) return title.trimEnd();
+  const boundary = title.search(/\s+\S*$/);
+  return boundary > 0 ? title.slice(0, boundary) : title.trimEnd();
+}
+
+async function postConversation(path, body, failureMessage) {
+  try {
+    const response = await fetch(`/api/lab/api/conversations${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error();
+    const data = await response.json();
+    if (!Number.isSafeInteger(data?.id) || data.id <= 0) throw new Error();
+    return data;
+  } catch {
+    throw new Error(failureMessage);
+  }
+}
+
 const configuration = [
   ['Modelo', 'Qwen3:8b'],
   ['Ejecución', 'Local'],
@@ -14,6 +38,7 @@ const configuration = [
 
 function Viewer({ activeSection }) {
   const [messages, setMessages] = useState([]);
+  const [conversationId, setConversationId] = useState(null);
   const [draft, setDraft] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -76,6 +101,7 @@ function Viewer({ activeSection }) {
     setAgentLoading(true);
     setAgentError('');
     setMessages([]);
+    setConversationId(null);
     setDraft('');
     setError('');
   }
@@ -87,12 +113,29 @@ function Viewer({ activeSection }) {
 
     const nextMessages = [...messages, { role: 'user', content }];
     requestInProgress.current = true;
-    setMessages(nextMessages);
-    setDraft('');
     setError('');
     setIsLoading(true);
 
+    let userSaved = false;
     try {
+      let activeConversationId = conversationId;
+      if (activeConversationId === null) {
+        const conversation = await postConversation('', {
+          titulo: conversationTitle(content),
+          agente_id: activeAgentId,
+          modelo: 'qwen3:8b',
+          workspace: '/workspace',
+        }, 'No se pudo crear la conversación. Comprueba el servidor local.');
+        activeConversationId = conversation.id;
+        setConversationId(activeConversationId);
+      }
+      await postConversation(`/${activeConversationId}/messages`, {
+        rol: 'user', contenido: content,
+      }, 'No se pudo guardar tu mensaje. No se ha enviado a Ollama.');
+      userSaved = true;
+      setMessages(nextMessages);
+      setDraft('');
+
       const response = await fetch('/api/ollama/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -109,11 +152,18 @@ function Viewer({ activeSection }) {
       if (typeof data.message?.content !== 'string' || !data.message.content.trim()) {
         throw new Error('Ollama no devolvió una respuesta válida.');
       }
+      try {
+        await postConversation(`/${activeConversationId}/messages`, {
+          rol: 'assistant', contenido: data.message.content,
+        }, 'La respuesta de Qwen está visible, pero no pudo guardarse. No se reintentará automáticamente.');
+      } catch (saveError) {
+        setError(saveError.message);
+      }
       setMessages([...nextMessages, { role: 'assistant', content: data.message.content }]);
     } catch (requestError) {
-      setError(`No se pudo obtener una respuesta. ${requestError instanceof TypeError
+      setError(userSaved ? `No se pudo obtener una respuesta. ${requestError instanceof TypeError
         ? 'Comprueba que Ollama esté disponible y que Vite esté ejecutándose con el proxy.'
-        : requestError.message} Puedes volver a enviar un mensaje.`);
+        : requestError.message} Puedes volver a enviar un mensaje.` : requestError.message);
     } finally {
       requestInProgress.current = false;
       setIsLoading(false);
@@ -175,7 +225,7 @@ function Viewer({ activeSection }) {
           )}
           {activeSection === 'Historial' && (
             <div className="section-card">
-              <h2>Todavía no existen conversaciones almacenadas</h2>
+              <h2>Historial próximamente</h2>
               <p>El historial de conversaciones estará disponible en una próxima etapa.</p>
             </div>
           )}
@@ -251,7 +301,7 @@ function Viewer({ activeSection }) {
             <button type="button" disabled={isLoading || !draft.trim() || !agentReady} onClick={sendMessage}>Enviar</button>
           </div>
         </div>
-        <p className="composer-note">Enter para enviar · Shift+Enter para una nueva línea. Conversación guardada solo durante esta sesión.</p>
+        <p className="composer-note">Enter para enviar · Shift+Enter para una nueva línea. Los mensajes se guardan localmente; el historial estará disponible próximamente.</p>
       </div>
     </main>
   );
