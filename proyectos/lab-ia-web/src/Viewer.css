@@ -35,6 +35,17 @@
   color: var(--muted);
 }
 
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.agent-select.new-chat {
+  margin-top: 0;
+}
+
 .workspace-label code {
   font-family: var(--mono);
   font-size: 13px;

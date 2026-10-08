@@ -182,16 +182,25 @@ function Viewer({ activeSection, onSelectSection }) {
     }
   }
 
+  function resetChat() {
+    setMessages([]);
+    setConversationId(null);
+    setDraft('');
+    setError('');
+  }
+
+  function newChat() {
+    if (requestInProgress.current || openingRequest.current) return;
+    resetChat();
+  }
+
   function selectAgent(id) {
     if (requestInProgress.current || openingRequest.current || id === activeAgentId) return;
     setActiveAgentId(id);
     setLoadedAgent(null);
     setAgentLoading(true);
     setAgentError('');
-    setMessages([]);
-    setConversationId(null);
-    setDraft('');
-    setError('');
+    resetChat();
   }
 
 
@@ -361,9 +370,15 @@ function Viewer({ activeSection, onSelectSection }) {
           <p className="viewer-eyebrow">Agente especializado</p>
           <h1 id="viewer-title">{activeAgentName}</h1>
         </div>
-        <div className="workspace-label">
-          <span>Workspace</span>
-          <code>/workspace</code>
+        <div className="chat-header-actions">
+          <button className="agent-select new-chat" type="button"
+            disabled={isLoading || openingId !== null
+              || (conversationId === null && messages.length === 0 && !draft && !error)}
+            onClick={newChat}>Nuevo chat</button>
+          <div className="workspace-label">
+            <span>Workspace</span>
+            <code>/workspace</code>
+          </div>
         </div>
       </header>
 
