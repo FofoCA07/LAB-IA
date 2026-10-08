@@ -46,6 +46,10 @@ function validConversation(value) {
 }
 
 function Viewer({ activeSection, onSelectSection }) {
+  const [workspaces, setWorkspaces] = useState([]);
+  const [workspacesLoading, setWorkspacesLoading] = useState(true);
+  const [workspacesError, setWorkspacesError] = useState('');
+  const [selectedWorkspace, setSelectedWorkspace] = useState(null);
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState('');
@@ -133,6 +137,31 @@ function Viewer({ activeSection, onSelectSection }) {
   }, [activeSection, isLoading]);
 
   useEffect(() => () => openingRequest.current?.abort(), [activeSection]);
+
+  useEffect(() => {
+    if (activeSection !== 'Proyectos') return;
+    const controller = new AbortController();
+    async function loadWorkspaces() {
+      setWorkspacesLoading(true);
+      setWorkspacesError('');
+      try {
+        const response = await fetch('/api/lab/api/workspaces', { signal: controller.signal });
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        if (!Array.isArray(data) || !data.every((workspace) =>
+          workspace && typeof workspace.path === 'string' && workspace.path.startsWith('/')
+          && ['windows', 'wsl'].includes(workspace.type)
+          && typeof workspace.exists === 'boolean')) throw new Error();
+        if (!controller.signal.aborted) setWorkspaces(data);
+      } catch {
+        if (!controller.signal.aborted) setWorkspacesError('No se pudieron cargar los proyectos. Comprueba el servidor local.');
+      } finally {
+        if (!controller.signal.aborted) setWorkspacesLoading(false);
+      }
+    }
+    void loadWorkspaces();
+    return () => controller.abort();
+  }, [activeSection]);
 
   async function openConversation(id) {
     if (requestInProgress.current || openingRequest.current) return;
@@ -313,11 +342,32 @@ function Viewer({ activeSection, onSelectSection }) {
           )}
           {activeSection === 'Proyectos' && (
             <>
-              <p className="section-description">Aquí se mostrarán los workspaces disponibles.</p>
-              <div className="section-card">
-                <h2>Workspace actual</h2>
-                <code>/workspace</code>
-              </div>
+              <p className="section-description">La selección es solo visual: todavía no activa el workspace en OpenCode ni ejecuta comandos.</p>
+              {workspacesLoading && <p role="status">Cargando proyectos...</p>}
+              {workspacesError && <p className="chat-error" role="alert">{workspacesError}</p>}
+              {!workspacesLoading && !workspacesError && workspaces.length === 0 && <p>No hay workspaces recientes.</p>}
+              {!workspacesLoading && !workspacesError && (
+                <ul className="project-list">
+                  {workspaces.map((workspace) => (
+                    <li className={`section-card project-card${workspace.path === selectedWorkspace ? ' selected-project' : ''}`} key={workspace.path}>
+                      <code>{workspace.path}</code>
+                      <div className="project-details">
+                        <span className="project-type">{workspace.type === 'windows' ? 'Windows' : 'WSL'}</span>
+                        <span className={`project-status ${workspace.exists ? 'available' : 'unavailable'}`}>
+                          {workspace.exists ? 'Disponible' : 'No disponible'}
+                        </span>
+                      </div>
+                      <button className="agent-select" type="button"
+                        disabled={!workspace.exists}
+                        aria-pressed={workspace.path === selectedWorkspace}
+                        aria-label={`Seleccionar ${workspace.path}`}
+                        onClick={() => { if (workspace.exists) setSelectedWorkspace(workspace.path); }}>
+                        {workspace.path === selectedWorkspace ? 'Seleccionado' : 'Seleccionar'}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </>
           )}
           {activeSection === 'Historial' && (

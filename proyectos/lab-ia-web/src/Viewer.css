@@ -343,6 +343,44 @@
   background: var(--bg-accent);
 }
 
+.project-list {
+  display: grid;
+  gap: 16px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.project-card code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.selected-project {
+  border-color: var(--qwen-primary);
+  background: var(--bg-accent);
+}
+
+.project-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.project-type {
+  color: var(--muted);
+}
+
+.project-status.available {
+  color: var(--text-accent);
+}
+
+.project-status.unavailable {
+  color: var(--text-secondary);
+}
+
 .agent-select {
   margin-top: 16px;
   padding: 8px 14px;

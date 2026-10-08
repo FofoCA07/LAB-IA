@@ -1,12 +1,13 @@
 import { createServer } from 'node:http';
 import { constants } from 'node:fs';
-import { mkdir, open, readdir, realpath } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { mkdir, open, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { dirname, resolve, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const serverDir = dirname(await realpath(fileURLToPath(import.meta.url)));
 const labRoot = resolve(serverDir, '../../..');
 const agentsDir = resolve(labRoot, 'agentes/agents');
+const recentWorkspacesFile = resolve(labRoot, 'runtime/recent-workspaces');
 const validId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 let database;
@@ -63,6 +64,39 @@ async function readJson(request) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+async function workspaces(request, response) {
+  if (request.method !== 'GET') {
+    response.setHeader('Allow', 'GET');
+    json(response, 405, { error: 'Método no permitido.' });
+    return;
+  }
+  try {
+    let content;
+    try {
+      content = await readFile(recentWorkspacesFile, 'utf8');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      json(response, 200, []);
+      return;
+    }
+    const paths = [...new Set(content.split(/\r?\n/)
+      .filter((path) => posix.isAbsolute(path) && !/[\x00-\x1f\x7f]/.test(path)))];
+    const result = await Promise.all(paths.map(async (path) => {
+      let exists = true;
+      try {
+        await stat(path);
+      } catch (error) {
+        if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+        exists = false;
+      }
+      return { path, type: /^\/mnt\/[a-z](?:\/|$)/i.test(path) ? 'windows' : 'wsl', exists };
+    }));
+    json(response, 200, result);
+  } catch {
+    json(response, 500, { error: 'No se pudieron consultar los workspaces recientes.' });
+  }
 }
 
 async function conversations(request, response, path) {
@@ -174,6 +208,10 @@ async function conversations(request, response, path) {
 const server = createServer(async (request, response) => {
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
+  if (path === '/api/workspaces') {
+    await workspaces(request, response);
+    return;
+  }
   if (path === '/api/conversations' || path.startsWith('/api/conversations/')) {
     await conversations(request, response, path);
     return;
