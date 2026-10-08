@@ -1,13 +1,52 @@
 import { createServer } from 'node:http';
 import { constants } from 'node:fs';
-import { open, readdir, realpath } from 'node:fs/promises';
+import { mkdir, open, readdir, realpath } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const serverDir = dirname(fileURLToPath(import.meta.url));
+const serverDir = dirname(await realpath(fileURLToPath(import.meta.url)));
 const labRoot = resolve(serverDir, '../../..');
 const agentsDir = resolve(labRoot, 'agentes/agents');
 const validId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+let database;
+try {
+  const { DatabaseSync } = await import('node:sqlite');
+  const runtimeDir = resolve(labRoot, 'runtime');
+  await mkdir(runtimeDir, { recursive: true });
+  database = new DatabaseSync(resolve(runtimeDir, 'lab-ia.db'));
+  database.exec(`
+    PRAGMA foreign_keys = ON;
+    BEGIN;
+    CREATE TABLE IF NOT EXISTS conversaciones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      titulo TEXT NOT NULL,
+      agente_id TEXT NOT NULL,
+      modelo TEXT NOT NULL,
+      workspace TEXT NOT NULL,
+      creada_en TEXT NOT NULL,
+      actualizada_en TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS mensajes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversacion_id INTEGER NOT NULL,
+      rol TEXT NOT NULL,
+      contenido TEXT NOT NULL,
+      creado_en TEXT NOT NULL,
+      FOREIGN KEY(conversacion_id)
+        REFERENCES conversaciones(id)
+        ON DELETE CASCADE
+    );
+    COMMIT;
+  `);
+} catch (error) {
+  console.error('LAB-IA: no se pudo inicializar SQLite; el servidor no se iniciará.', error);
+  try {
+    database?.close();
+  } finally {
+    process.exit(1);
+  }
+}
 
 function json(response, status, body) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
