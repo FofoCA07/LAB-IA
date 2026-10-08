@@ -373,6 +373,20 @@
   color: var(--muted);
 }
 
+.workspace-activate {
+  margin-bottom: 20px;
+}
+
+.workspace-activating {
+  color: var(--muted);
+}
+
+.workspace-active {
+  color: var(--text-accent);
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
 .project-status.available {
   color: var(--text-accent);
 }

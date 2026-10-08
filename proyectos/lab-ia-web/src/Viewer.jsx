@@ -50,6 +50,10 @@ function Viewer({ activeSection, onSelectSection }) {
   const [workspacesLoading, setWorkspacesLoading] = useState(true);
   const [workspacesError, setWorkspacesError] = useState('');
   const [selectedWorkspace, setSelectedWorkspace] = useState(null);
+  const [activeWorkspace, setActiveWorkspace] = useState(null);
+  const [workspaceActivating, setWorkspaceActivating] = useState(false);
+  const [activationError, setActivationError] = useState('');
+  const activationPending = useRef(false);
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState('');
@@ -162,6 +166,36 @@ function Viewer({ activeSection, onSelectSection }) {
     void loadWorkspaces();
     return () => controller.abort();
   }, [activeSection]);
+
+  async function activateSelectedWorkspace() {
+    if (activationPending.current || workspacesLoading || workspacesError
+      || !workspaces.some((workspace) => workspace.path === selectedWorkspace && workspace.exists)) return;
+    const path = selectedWorkspace;
+    activationPending.current = true;
+    setWorkspaceActivating(true);
+    setActivationError('');
+    try {
+      const response = await fetch('/api/lab/api/workspaces/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(response.status === 409 ? 'Ya hay una activación de workspace en curso.'
+          : 'No se pudo activar el workspace. Comprueba que siga disponible en el historial reciente.');
+      }
+      if (data?.success !== true || data.workspace !== path) throw new Error('Respuesta de activación no válida.');
+      setActiveWorkspace(path);
+    } catch (failure) {
+      // A failed or disconnected request may have partially changed OpenCode.
+      setActiveWorkspace(null);
+      setActivationError(`${failure instanceof TypeError ? 'No se pudo confirmar la activación. Comprueba el servidor local.' : failure.message} El workspace activo no está confirmado.`);
+    } finally {
+      activationPending.current = false;
+      setWorkspaceActivating(false);
+    }
+  }
 
   async function openConversation(id) {
     if (requestInProgress.current || openingRequest.current) return;
@@ -342,7 +376,17 @@ function Viewer({ activeSection, onSelectSection }) {
           )}
           {activeSection === 'Proyectos' && (
             <>
-              <p className="section-description">La selección es solo visual: todavía no activa el workspace en OpenCode ni ejecuta comandos.</p>
+              <p className="section-description">Seleccionar es solo visual. Para cambiar OpenCode, pulsa Activar workspace. OpenCode ve el proyecto como <code>/workspace</code>.</p>
+              {selectedWorkspace && <p>Seleccionado: <code>{selectedWorkspace}</code></p>}
+              {workspaceActivating && <p className="workspace-activating" role="status">Activando workspace...</p>}
+              {activeWorkspace && <p className="workspace-active" role="status">Workspace activo: <code>{activeWorkspace}</code></p>}
+              {activationError && <p className="chat-error" role="alert">{activationError}</p>}
+              {!workspacesLoading && !workspacesError && workspaces.some((workspace) => workspace.path === selectedWorkspace && workspace.exists) && (
+                <button className="agent-select workspace-activate" type="button"
+                  disabled={workspaceActivating} onClick={() => void activateSelectedWorkspace()}>
+                  Activar workspace
+                </button>
+              )}
               {workspacesLoading && <p role="status">Cargando proyectos...</p>}
               {workspacesError && <p className="chat-error" role="alert">{workspacesError}</p>}
               {!workspacesLoading && !workspacesError && workspaces.length === 0 && <p>No hay workspaces recientes.</p>}
@@ -356,12 +400,13 @@ function Viewer({ activeSection, onSelectSection }) {
                         <span className={`project-status ${workspace.exists ? 'available' : 'unavailable'}`}>
                           {workspace.exists ? 'Disponible' : 'No disponible'}
                         </span>
+                        {workspace.path === activeWorkspace && <span className="workspace-active">Activo</span>}
                       </div>
                       <button className="agent-select" type="button"
-                        disabled={!workspace.exists}
+                        disabled={!workspace.exists || workspaceActivating}
                         aria-pressed={workspace.path === selectedWorkspace}
                         aria-label={`Seleccionar ${workspace.path}`}
-                        onClick={() => { if (workspace.exists) setSelectedWorkspace(workspace.path); }}>
+                        onClick={() => { if (workspace.exists && !activationPending.current) setSelectedWorkspace(workspace.path); }}>
                         {workspace.path === selectedWorkspace ? 'Seleccionado' : 'Seleccionar'}
                       </button>
                     </li>

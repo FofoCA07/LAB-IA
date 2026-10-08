@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { mkdir, open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, resolve, posix } from 'node:path';
@@ -8,6 +9,8 @@ const serverDir = dirname(await realpath(fileURLToPath(import.meta.url)));
 const labRoot = resolve(serverDir, '../../..');
 const agentsDir = resolve(labRoot, 'agentes/agents');
 const recentWorkspacesFile = resolve(labRoot, 'runtime/recent-workspaces');
+const labOpenPath = resolve(labRoot, 'scripts/lab-open');
+let activationInProgress = false;
 const validId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 let database;
@@ -96,6 +99,116 @@ async function workspaces(request, response) {
     json(response, 200, result);
   } catch {
     json(response, 500, { error: 'No se pudieron consultar los workspaces recientes.' });
+  }
+}
+
+function validActivationPath(path) {
+  return typeof path === 'string' && path.trim().length > 0
+    && posix.isAbsolute(path) && !/[\x00-\x1f\x7f]/.test(path)
+    && !path.split('/').includes('..');
+}
+
+function runLabOpen(workspacePath) {
+  return new Promise((resolveResult, reject) => {
+    const child = spawn(labOpenPath, [workspacePath], {
+      cwd: labRoot, shell: false, stdio: 'ignore',
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      // Target only this child; never signal a process group or unrelated process.
+      child.kill('SIGKILL');
+    }, 120_000);
+    child.once('error', () => {
+      clearTimeout(timer);
+      reject(new Error('No se pudo activar el workspace.'));
+    });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      if (timedOut) reject(Object.assign(new Error(), { code: 'ACTIVATION_TIMEOUT' }));
+      else if (code !== 0) reject(new Error('No se pudo activar el workspace.'));
+      else resolveResult();
+    });
+  });
+}
+
+async function activateWorkspace(request, response) {
+  if (request.method !== 'POST') {
+    response.setHeader('Allow', 'POST');
+    json(response, 405, { success: false, error: 'Método no permitido.' });
+    return;
+  }
+  // Require JSON and reject cross-origin browser requests to this local executor.
+  if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+    json(response, 415, { success: false, error: 'Se requiere application/json.' });
+    return;
+  }
+  if (request.headers.origin) {
+    let origin;
+    try { origin = new URL(request.headers.origin); } catch { /* Invalid origin is rejected below. */ }
+    if (!origin || !['http:', 'https:'].includes(origin.protocol) || origin.host !== request.headers.host) {
+      json(response, 403, { success: false, error: 'Origen no permitido.' });
+      return;
+    }
+  }
+  if (activationInProgress) {
+    json(response, 409, { success: false, error: 'Ya hay una activación de workspace en curso.' });
+    return;
+  }
+  activationInProgress = true;
+  try {
+    let body;
+    try {
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of request) {
+        size += chunk.length;
+        if (size > 16_384) {
+          json(response, 413, { success: false, error: 'Solicitud demasiado grande.' });
+          return;
+        }
+        chunks.push(chunk);
+      }
+      body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    } catch {
+      json(response, 400, { success: false, error: 'JSON no válido.' });
+      return;
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'path')
+      || !validActivationPath(body.path)) {
+      json(response, 400, { success: false, error: 'Ruta de workspace no válida.' });
+      return;
+    }
+    let content;
+    try { content = await readFile(recentWorkspacesFile, 'utf8'); } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      content = '';
+    }
+    if (!content.split(/\r?\n/).filter(validActivationPath).includes(body.path)) {
+      json(response, 403, { success: false, error: 'El workspace no pertenece al historial reciente actual.' });
+      return;
+    }
+    let directory;
+    try { directory = await stat(body.path); } catch (error) {
+      if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+    }
+    if (!directory?.isDirectory()) {
+      json(response, 400, { success: false, error: 'El workspace no existe o no es un directorio.' });
+      return;
+    }
+    try {
+      await runLabOpen(body.path);
+    } catch (error) {
+      json(response, 500, { success: false, error: error.code === 'ACTIVATION_TIMEOUT'
+        ? 'La activación excedió el tiempo máximo de 120 segundos.' : 'No se pudo activar el workspace.' });
+      return;
+    }
+    json(response, 200, { success: true, workspace: body.path });
+  } catch {
+    json(response, 500, { success: false, error: 'No se pudo activar el workspace.' });
+  } finally {
+    activationInProgress = false;
   }
 }
 
@@ -208,6 +321,10 @@ async function conversations(request, response, path) {
 const server = createServer(async (request, response) => {
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
+  if (path === '/api/workspaces/activate') {
+    await activateWorkspace(request, response);
+    return;
+  }
   if (path === '/api/workspaces') {
     await workspaces(request, response);
     return;
