@@ -4,13 +4,13 @@
   display: flex;
   flex-direction: column;
   padding: 28px 16px;
-  background: #171e2b;
-  color: #dce3ee;
+  background: var(--bg-sidebar);
+  color: var(--text-primary);
 }
 
 .sidebar-label {
   margin: 0 12px 18px;
-  color: #9aa9bf;
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 1.5px;
@@ -31,26 +31,26 @@
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
-  color: #c1cddd;
+  color: var(--text-secondary);
   text-align: left;
   cursor: pointer;
 }
 
 .sidebar-option:hover {
-  background: #222d3e;
+  background: var(--bg-panel);
 }
 
 .sidebar-option.is-active {
-  background: #29394f;
-  border-color: #394f6b;
-  color: #ffffff;
+  background: var(--bg-accent);
+  border-color: var(--qwen-primary);
+  color: var(--text-primary);
   font-weight: 600;
 }
 
 .sidebar-note {
   margin: auto 12px 0;
   padding-top: 40px;
-  color: #9aa9bf;
+  color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.7;
 }

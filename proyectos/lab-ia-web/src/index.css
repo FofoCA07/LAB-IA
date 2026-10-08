@@ -1,14 +1,26 @@
 :root {
-  --text: #243247;
-  --muted: #5f6d80;
-  --border: #e0e6ee;
+  --bg-main: #111827;
+  --bg-sidebar: #0f172a;
+  --bg-panel: #1e293b;
+  --bg-panel-soft: #172033;
+  --border: #334155;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --qwen-primary: #6366f1;
+  --qwen-secondary: #8b5cf6;
+  --success: #10b981;
+  --danger: #ef4444;
+  --bg-accent: #25264b;
+  --text-accent: #c7d2fe;
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
   --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 1.5;
   color: var(--text);
-  background: #f6f8fb;
-  color-scheme: light;
+  background: var(--bg-main);
+  color-scheme: dark;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -39,6 +51,6 @@ textarea {
 
 button:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid #5484bd;
+  outline: 2px solid var(--qwen-primary);
   outline-offset: 3px;
 }
