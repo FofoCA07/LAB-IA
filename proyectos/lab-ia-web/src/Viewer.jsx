@@ -36,7 +36,22 @@ const configuration = [
   ['Workspace', '/workspace'],
 ];
 
-function Viewer({ activeSection }) {
+function validConversation(value) {
+  return value && Number.isSafeInteger(value.id) && value.id > 0
+    && ['titulo', 'agente_id', 'modelo', 'workspace', 'creada_en', 'actualizada_en']
+      .every((field) => typeof value[field] === 'string' && value[field].trim())
+    && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.agente_id)
+    && Number.isFinite(Date.parse(value.creada_en))
+    && Number.isFinite(Date.parse(value.actualizada_en));
+}
+
+function Viewer({ activeSection, onSelectSection }) {
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState('');
+  const [openingId, setOpeningId] = useState(null);
+  const [openError, setOpenError] = useState('');
+  const openingRequest = useRef(null);
   const [messages, setMessages] = useState([]);
   const [conversationId, setConversationId] = useState(null);
   const [draft, setDraft] = useState('');
@@ -76,6 +91,7 @@ function Viewer({ activeSection }) {
   }, []);
 
   useEffect(() => {
+    if (loadedAgent?.id === activeAgentId) return;
     const controller = new AbortController();
     async function loadAgent() {
       try {
@@ -92,10 +108,82 @@ function Viewer({ activeSection }) {
     }
     void loadAgent();
     return () => controller.abort();
-  }, [activeAgentId]);
+  }, [activeAgentId, loadedAgent?.id]);
+
+  useEffect(() => {
+    if (activeSection !== 'Historial') return;
+    const controller = new AbortController();
+    async function loadHistory() {
+      setHistoryLoading(true);
+      setHistoryError('');
+      try {
+        const response = await fetch('/api/lab/api/conversations', { signal: controller.signal });
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        if (!Array.isArray(data) || !data.every(validConversation)) throw new Error();
+        if (!controller.signal.aborted) setHistory(data);
+      } catch {
+        if (!controller.signal.aborted) setHistoryError('No se pudo cargar el historial. Comprueba el servidor local.');
+      } finally {
+        if (!controller.signal.aborted) setHistoryLoading(false);
+      }
+    }
+    void loadHistory();
+    return () => controller.abort();
+  }, [activeSection, isLoading]);
+
+  useEffect(() => () => openingRequest.current?.abort(), [activeSection]);
+
+  async function openConversation(id) {
+    if (requestInProgress.current || openingRequest.current) return;
+    const controller = new AbortController();
+    openingRequest.current = controller;
+    setOpeningId(id);
+    setOpenError('');
+    try {
+      const response = await fetch(`/api/lab/api/conversations/${id}`, { signal: controller.signal });
+      if (!response.ok) throw new Error('No se pudo recuperar la conversación.');
+      const data = await response.json();
+      if (!validConversation(data?.conversation) || data.conversation.id !== id
+        || !Array.isArray(data.messages) || !data.messages.every((message) =>
+          message && Number.isSafeInteger(message.id) && message.id > 0
+          && message.conversacion_id === id && ['user', 'assistant'].includes(message.rol)
+          && typeof message.contenido === 'string' && message.contenido.trim()
+          && typeof message.creado_en === 'string' && Number.isFinite(Date.parse(message.creado_en)))) {
+        throw new Error('La conversación contiene datos no válidos.');
+      }
+      const agentId = data.conversation.agente_id;
+      const agentResponse = await fetch(`/api/lab/api/agents/${encodeURIComponent(agentId)}`, { signal: controller.signal });
+      if (!agentResponse.ok) {
+        throw new Error(agentResponse.status === 404
+          ? 'El agente de esta conversación ya no existe. No se abrió la conversación.'
+          : 'No se pudo cargar el agente real. No se abrió la conversación.');
+      }
+      const agent = await agentResponse.json();
+      if (agent?.id !== agentId || typeof agent.content !== 'string' || !agent.content.trim()) {
+        throw new Error('Las instrucciones del agente no son válidas. No se abrió la conversación.');
+      }
+      if (controller.signal.aborted) return;
+      setConversationId(id);
+      setActiveAgentId(agentId);
+      setLoadedAgent({ id: agentId, content: agent.content });
+      setAgentLoading(false);
+      setAgentError('');
+      setMessages(data.messages.map((message) => ({ role: message.rol, content: message.contenido })));
+      setDraft('');
+      setError('');
+      onSelectSection('Chat');
+    } catch (openFailure) {
+      if (!controller.signal.aborted) setOpenError(openFailure instanceof TypeError
+        ? 'No se pudo abrir la conversación. Comprueba el servidor local.' : openFailure.message);
+    } finally {
+      openingRequest.current = null;
+      setOpeningId(null);
+    }
+  }
 
   function selectAgent(id) {
-    if (requestInProgress.current || id === activeAgentId) return;
+    if (requestInProgress.current || openingRequest.current || id === activeAgentId) return;
     setActiveAgentId(id);
     setLoadedAgent(null);
     setAgentLoading(true);
@@ -109,7 +197,7 @@ function Viewer({ activeSection }) {
 
   async function sendMessage() {
     const content = draft.trim();
-    if (!content || requestInProgress.current || !agentReady) return;
+    if (!content || requestInProgress.current || openingRequest.current || !agentReady) return;
 
     const nextMessages = [...messages, { role: 'user', content }];
     requestInProgress.current = true;
@@ -204,7 +292,7 @@ function Viewer({ activeSection }) {
                       className="agent-select"
                       type="button"
                       aria-pressed={agent.id === activeAgentId}
-                      disabled={isLoading}
+                      disabled={isLoading || openingId !== null}
                       onClick={() => selectAgent(agent.id)}
                     >
                       {agent.id === activeAgentId ? 'Seleccionado' : 'Seleccionar'}
@@ -224,10 +312,29 @@ function Viewer({ activeSection }) {
             </>
           )}
           {activeSection === 'Historial' && (
-            <div className="section-card">
-              <h2>Historial próximamente</h2>
-              <p>El historial de conversaciones estará disponible en una próxima etapa.</p>
-            </div>
+            <>
+              {historyLoading && <p role="status">Cargando historial...</p>}
+              {historyError && <p className="chat-error" role="alert">{historyError}</p>}
+              {openError && <p className="chat-error" role="alert">{openError}</p>}
+              {openingId !== null && <p role="status">Abriendo conversación y cargando su agente...</p>}
+              {!historyLoading && !historyError && history.length === 0 && <p>No hay conversaciones guardadas.</p>}
+              {!historyLoading && !historyError && (
+                <ul className="history-list">
+                  {history.map((conversation) => (
+                    <li className="section-card" key={conversation.id}>
+                      <h2>{conversation.titulo}</h2>
+                      <p>{agentName(conversation.agente_id)} · <time dateTime={conversation.actualizada_en}>
+                        {new Date(conversation.actualizada_en).toLocaleString()}
+                      </time></p>
+                      <button className="agent-select" type="button"
+                        disabled={isLoading || openingId !== null}
+                        aria-label={`Abrir ${conversation.titulo}`}
+                        onClick={() => void openConversation(conversation.id)}>Abrir conversación</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
           {activeSection === 'Configuración' && (
             <>
@@ -298,10 +405,10 @@ function Viewer({ activeSection }) {
           />
           <div className="composer-footer">
             <span>{activeAgentName} · Qwen3:8b</span>
-            <button type="button" disabled={isLoading || !draft.trim() || !agentReady} onClick={sendMessage}>Enviar</button>
+            <button type="button" disabled={isLoading || openingId !== null || !draft.trim() || !agentReady} onClick={sendMessage}>Enviar</button>
           </div>
         </div>
-        <p className="composer-note">Enter para enviar · Shift+Enter para una nueva línea. Los mensajes se guardan localmente; el historial estará disponible próximamente.</p>
+        <p className="composer-note">Enter para enviar · Shift+Enter para una nueva línea. Los mensajes se guardan localmente y pueden recuperarse desde Historial.</p>
       </div>
     </main>
   );

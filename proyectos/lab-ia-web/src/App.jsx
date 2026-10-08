@@ -12,7 +12,7 @@ function App() {
 
       <div className="main-content">
         <Sidebar activeSection={activeSection} onSelectSection={setActiveSection} />
-        <Viewer activeSection={activeSection} />
+        <Viewer activeSection={activeSection} onSelectSection={setActiveSection} />
       </div>
     </div>
   );

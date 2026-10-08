@@ -184,6 +184,15 @@
   margin: 0;
 }
 
+.history-list {
+  display: grid;
+  gap: 16px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .section-card {
   padding: 24px;
   border: 1px solid var(--border);
