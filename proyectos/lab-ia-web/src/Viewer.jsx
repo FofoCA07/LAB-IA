@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import './Viewer.css';
 
 function agentName(id) {
@@ -51,6 +51,10 @@ function Viewer({ activeSection, onSelectSection }) {
   const [workspacesError, setWorkspacesError] = useState('');
   const [selectedWorkspace, setSelectedWorkspace] = useState(null);
   const [activeWorkspace, setActiveWorkspace] = useState(null);
+  const [infrastructure, setInfrastructure] = useState(null);
+  const [activeWorkspaceLoading, setActiveWorkspaceLoading] = useState(true);
+  const [activeWorkspaceError, setActiveWorkspaceError] = useState('');
+  const activeWorkspaceRequest = useRef(0);
   const [workspaceActivating, setWorkspaceActivating] = useState(false);
   const [activationError, setActivationError] = useState('');
   const activationPending = useRef(false);
@@ -167,6 +171,41 @@ function Viewer({ activeSection, onSelectSection }) {
     return () => controller.abort();
   }, [activeSection]);
 
+  const loadActiveWorkspace = useCallback(async (signal) => {
+    const requestId = ++activeWorkspaceRequest.current;
+    setActiveWorkspaceLoading(true);
+    setActiveWorkspaceError('');
+    setActiveWorkspace(null);
+    setInfrastructure(null);
+    try {
+      const response = await fetch('/api/lab/api/workspaces/active', { signal, cache: 'no-store' });
+      if (!response.ok) throw new Error();
+      const data = await response.json();
+      if (!data || typeof data.active !== 'boolean' || typeof data.running !== 'boolean'
+        || !(data.workspace === null || (typeof data.workspace === 'string' && data.workspace.length > 0))
+        || data.active !== (data.running && data.workspace !== null)) throw new Error();
+      if (!signal?.aborted && requestId === activeWorkspaceRequest.current) {
+        setInfrastructure(data);
+        setActiveWorkspace(data.active ? data.workspace : null);
+      }
+      return data;
+    } catch {
+      if (!signal?.aborted && requestId === activeWorkspaceRequest.current) {
+        setActiveWorkspaceError('No se pudo consultar Docker para determinar el workspace activo.');
+      }
+      throw new Error('No se pudo verificar el workspace activo mediante Docker.');
+    } finally {
+      if (!signal?.aborted && requestId === activeWorkspaceRequest.current) setActiveWorkspaceLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeSection !== 'Proyectos') return;
+    const controller = new AbortController();
+    void loadActiveWorkspace(controller.signal).catch(() => {});
+    return () => controller.abort();
+  }, [activeSection, loadActiveWorkspace]);
+
   async function activateSelectedWorkspace() {
     if (activationPending.current || workspacesLoading || workspacesError
       || !workspaces.some((workspace) => workspace.path === selectedWorkspace && workspace.exists)) return;
@@ -174,6 +213,7 @@ function Viewer({ activeSection, onSelectSection }) {
     activationPending.current = true;
     setWorkspaceActivating(true);
     setActivationError('');
+    let infrastructureConfirmed = false;
     try {
       const response = await fetch('/api/lab/api/workspaces/activate', {
         method: 'POST',
@@ -186,11 +226,18 @@ function Viewer({ activeSection, onSelectSection }) {
           : 'No se pudo activar el workspace. Comprueba que siga disponible en el historial reciente.');
       }
       if (data?.success !== true || data.workspace !== path) throw new Error('Respuesta de activación no válida.');
-      setActiveWorkspace(path);
+      const confirmed = await loadActiveWorkspace();
+      infrastructureConfirmed = true;
+      if (!confirmed.active || !confirmed.running || confirmed.workspace !== path) {
+        throw new Error('La activación no pudo verificarse: el workspace montado no coincide con el solicitado.');
+      }
     } catch (failure) {
       // A failed or disconnected request may have partially changed OpenCode.
-      setActiveWorkspace(null);
-      setActivationError(`${failure instanceof TypeError ? 'No se pudo confirmar la activación. Comprueba el servidor local.' : failure.message} El workspace activo no está confirmado.`);
+      if (!infrastructureConfirmed) {
+        setActiveWorkspace(null);
+        setInfrastructure(null);
+      }
+      setActivationError(`${failure instanceof TypeError ? 'No se pudo confirmar la activación. Comprueba el servidor local.' : failure.message}${infrastructureConfirmed ? '' : ' El workspace activo no está confirmado.'}`);
     } finally {
       activationPending.current = false;
       setWorkspaceActivating(false);
@@ -379,6 +426,10 @@ function Viewer({ activeSection, onSelectSection }) {
               <p className="section-description">Seleccionar es solo visual. Para cambiar OpenCode, pulsa Activar workspace. OpenCode ve el proyecto como <code>/workspace</code>.</p>
               {selectedWorkspace && <p>Seleccionado: <code>{selectedWorkspace}</code></p>}
               {workspaceActivating && <p className="workspace-activating" role="status">Activando workspace...</p>}
+              {activeWorkspaceLoading && <p className="workspace-activating" role="status">Consultando workspace activo...</p>}
+              {activeWorkspaceError && <p className="chat-error" role="alert">{activeWorkspaceError}</p>}
+              {!activeWorkspaceLoading && infrastructure && !infrastructure.running && <p role="status">OpenCode no está ejecutándose.</p>}
+              {!activeWorkspaceLoading && infrastructure?.running && !infrastructure.active && <p role="status">OpenCode está ejecutándose, pero no tiene un montaje en /workspace.</p>}
               {activeWorkspace && <p className="workspace-active" role="status">Workspace activo: <code>{activeWorkspace}</code></p>}
               {activationError && <p className="chat-error" role="alert">{activationError}</p>}
               {!workspacesLoading && !workspacesError && workspaces.some((workspace) => workspace.path === selectedWorkspace && workspace.exists) && (
@@ -400,7 +451,7 @@ function Viewer({ activeSection, onSelectSection }) {
                         <span className={`project-status ${workspace.exists ? 'available' : 'unavailable'}`}>
                           {workspace.exists ? 'Disponible' : 'No disponible'}
                         </span>
-                        {workspace.path === activeWorkspace && <span className="workspace-active">Activo</span>}
+                        {infrastructure?.running && workspace.path === activeWorkspace && <span className="workspace-active">Activo</span>}
                       </div>
                       <button className="agent-select" type="button"
                         disabled={!workspace.exists || workspaceActivating}

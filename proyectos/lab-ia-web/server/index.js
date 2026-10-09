@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { mkdir, open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, resolve, posix } from 'node:path';
@@ -99,6 +99,51 @@ async function workspaces(request, response) {
     json(response, 200, result);
   } catch {
     json(response, 500, { error: 'No se pudieron consultar los workspaces recientes.' });
+  }
+}
+
+function inspectOpenCode() {
+  return new Promise((resolveResult, reject) => {
+    execFile('docker', ['inspect', '--type', 'container', 'opencode'], {
+      shell: false, timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024,
+      encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' },
+    }, (error, stdout, stderr) => {
+      if (error) {
+        if (error.code === 1 && !error.killed
+          && /^Error(?: response from daemon)?: No such (?:object|container): opencode\s*$/i.test(stderr.trim())) {
+          resolveResult({ active: false, running: false, workspace: null });
+        } else reject(new Error('Docker inspection failed.'));
+        return;
+      }
+      try {
+        const data = JSON.parse(stdout);
+        if (!Array.isArray(data) || data.length !== 1
+          || typeof data[0]?.State?.Running !== 'boolean' || !Array.isArray(data[0].Mounts)) throw new Error();
+        const mount = data[0].Mounts.find((entry) => entry?.Destination === '/workspace');
+        const workspace = typeof mount?.Source === 'string' && mount.Source ? mount.Source : null;
+        const running = data[0].State.Running;
+        resolveResult({ active: running && workspace !== null, running, workspace });
+      } catch { reject(new Error('Invalid Docker inspection result.')); }
+    });
+  });
+}
+
+async function activeWorkspace(request, response) {
+  response.setHeader('Cache-Control', 'no-store');
+  if (request.method !== 'GET') {
+    response.setHeader('Allow', 'GET');
+    json(response, 405, { error: 'Método no permitido.' });
+    return;
+  }
+  if (request.url.includes('?') || request.headers['transfer-encoding']
+    || (request.headers['content-length'] && request.headers['content-length'] !== '0')) {
+    json(response, 400, { error: 'Este endpoint no acepta parámetros ni cuerpo.' });
+    return;
+  }
+  try {
+    json(response, 200, await inspectOpenCode());
+  } catch {
+    json(response, 500, { error: 'No se pudo consultar Docker para determinar el workspace activo.' });
   }
 }
 
@@ -321,6 +366,10 @@ async function conversations(request, response, path) {
 const server = createServer(async (request, response) => {
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
+  if (path === '/api/workspaces/active') {
+    await activeWorkspace(request, response);
+    return;
+  }
   if (path === '/api/workspaces/activate') {
     await activateWorkspace(request, response);
     return;
