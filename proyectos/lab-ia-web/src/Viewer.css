@@ -232,6 +232,11 @@
   max-width: 620px;
 }
 
+.opencode-status {
+  margin-top: 24px;
+  max-width: 620px;
+}
+
 .configuration-row {
   display: flex;
   justify-content: space-between;

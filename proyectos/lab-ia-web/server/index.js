@@ -147,6 +147,70 @@ async function activeWorkspace(request, response) {
   }
 }
 
+// Fixed, read-only Docker operations; no client input enters these arguments.
+function queryOpenCode(args) {
+  return new Promise((resolveResult, reject) => {
+    execFile('docker', args, {
+      shell: false, timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024,
+      encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' },
+    }, (error, stdout, stderr) => {
+      if (error) {
+        const missing = error.code === 1 && !error.killed
+          && /^Error(?: response from daemon)?: No such (?:object|container): opencode\s*$/i.test(stderr.trim());
+        reject(Object.assign(new Error('OpenCode status query failed.'), { missing }));
+      } else resolveResult(stdout.trim());
+    });
+  });
+}
+
+async function openCodeStatus(request, response) {
+  response.setHeader('Cache-Control', 'no-store');
+  if (request.method !== 'GET') {
+    response.setHeader('Allow', 'GET');
+    json(response, 405, { error: 'Método no permitido.' });
+    return;
+  }
+  if (request.url.includes('?') || request.headers['transfer-encoding']
+    || (request.headers['content-length'] && request.headers['content-length'] !== '0')) {
+    json(response, 400, { error: 'Este endpoint no acepta parámetros ni cuerpo.' });
+    return;
+  }
+  const status = { available: false, running: false, workspace: null, cliAvailable: false, version: null };
+  try {
+    let output;
+    try {
+      output = await queryOpenCode(['inspect', '--type', 'container', '--format',
+        '{{json .State.Running}}\n{{json .Mounts}}', 'opencode']);
+    } catch (error) {
+      if (!error.missing) throw error;
+      json(response, 200, status);
+      return;
+    }
+    const [runningJson, mountsJson] = output.split('\n');
+    const running = JSON.parse(runningJson);
+    const mounts = JSON.parse(mountsJson);
+    if (typeof running !== 'boolean' || !Array.isArray(mounts)) throw new Error();
+    const mount = mounts.find((entry) => entry?.Destination === '/workspace');
+    status.available = true;
+    status.running = running;
+    status.workspace = typeof mount?.Source === 'string' && mount.Source ? mount.Source : null;
+    if (running) {
+      // The non-interactive --version flag was verified in the container.
+      try {
+        const version = await queryOpenCode(['exec', '--workdir', '/', 'opencode', 'opencode', '--version']);
+        status.cliAvailable = true;
+        // Do not expose unexpected CLI output, logs, or internal paths.
+        if (/^\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/.test(version) && version.length <= 128) {
+          status.version = version;
+        }
+      } catch { /* CLI cannot be confirmed; keep it unavailable and version null. */ }
+    }
+    json(response, 200, status);
+  } catch {
+    json(response, 500, { error: 'No se pudo consultar el estado de OpenCode.' });
+  }
+}
+
 function validActivationPath(path) {
   return typeof path === 'string' && path.trim().length > 0
     && posix.isAbsolute(path) && !/[\x00-\x1f\x7f]/.test(path)
@@ -366,6 +430,10 @@ async function conversations(request, response, path) {
 const server = createServer(async (request, response) => {
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
+  if (path === '/api/opencode/status') {
+    await openCodeStatus(request, response);
+    return;
+  }
   if (path === '/api/workspaces/active') {
     await activeWorkspace(request, response);
     return;

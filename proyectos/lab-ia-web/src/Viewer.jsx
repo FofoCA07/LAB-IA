@@ -46,6 +46,9 @@ function validConversation(value) {
 }
 
 function Viewer({ activeSection, onSelectSection }) {
+  const [openCode, setOpenCode] = useState(null);
+  const [openCodeLoading, setOpenCodeLoading] = useState(true);
+  const [openCodeError, setOpenCodeError] = useState('');
   const [workspaces, setWorkspaces] = useState([]);
   const [workspacesLoading, setWorkspacesLoading] = useState(true);
   const [workspacesError, setWorkspacesError] = useState('');
@@ -80,6 +83,33 @@ function Viewer({ activeSection, onSelectSection }) {
   const activeAgentName = agentName(activeAgentId);
   const agentReady = !agentsLoading && !agentsError && !agentLoading
     && loadedAgent?.id === activeAgentId && Boolean(loadedAgent.content.trim());
+
+  useEffect(() => {
+    if (activeSection !== 'Configuración') return;
+    const controller = new AbortController();
+    async function loadOpenCode() {
+      setOpenCodeLoading(true);
+      setOpenCodeError('');
+      setOpenCode(null);
+      try {
+        const response = await fetch('/api/lab/api/opencode/status', {
+          signal: controller.signal, cache: 'no-store',
+        });
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        if (!data || !['available', 'running', 'cliAvailable'].every((key) => typeof data[key] === 'boolean')
+          || !(data.workspace === null || typeof data.workspace === 'string')
+          || !(data.version === null || typeof data.version === 'string')) throw new Error();
+        if (!controller.signal.aborted) setOpenCode(data);
+      } catch {
+        if (!controller.signal.aborted) setOpenCodeError('No se pudo consultar el estado de OpenCode. Comprueba el servidor local y Docker.');
+      } finally {
+        if (!controller.signal.aborted) setOpenCodeLoading(false);
+      }
+    }
+    void loadOpenCode();
+    return () => controller.abort();
+  }, [activeSection]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -502,6 +532,27 @@ function Viewer({ activeSection, onSelectSection }) {
                   </div>
                 ))}
               </dl>
+              <section className="opencode-status section-card" aria-labelledby="opencode-title">
+                <h2 id="opencode-title">OpenCode</h2>
+                {openCodeLoading && <p role="status">Consultando OpenCode...</p>}
+                {openCodeError && <p className="chat-error" role="alert">{openCodeError}</p>}
+                {!openCodeLoading && openCode && (
+                  <>
+                    <p role="status">{!openCode.available ? 'OpenCode no está disponible.'
+                      : !openCode.running ? 'El contenedor OpenCode está detenido.'
+                        : !openCode.cliAvailable ? 'El contenedor está ejecutándose, pero la CLI no está disponible.'
+                          : !openCode.version ? 'Contenedor y CLI disponibles; no se pudo obtener la versión.'
+                            : 'OpenCode funciona correctamente.'}</p>
+                    <dl className="configuration-list">
+                      <div className="configuration-row"><dt>Estado</dt><dd>{openCode.available ? 'Disponible' : 'No disponible'}</dd></div>
+                      <div className="configuration-row"><dt>Contenedor</dt><dd>{!openCode.available ? 'No existe' : openCode.running ? 'Ejecutándose' : 'Detenido'}</dd></div>
+                      <div className="configuration-row"><dt>CLI</dt><dd>{openCode.cliAvailable ? 'Disponible' : 'No disponible'}</dd></div>
+                      {openCode.version && <div className="configuration-row"><dt>Versión</dt><dd>{openCode.version}</dd></div>}
+                      <div className="configuration-row"><dt>Workspace real detectado</dt><dd><code>{openCode.workspace ?? 'No detectado'}</code></dd></div>
+                    </dl>
+                  </>
+                )}
+              </section>
             </>
           )}
         </section>
