@@ -237,6 +237,17 @@
   max-width: 620px;
 }
 
+.workspace-summary-result {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.workspace-summary-response {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .configuration-row {
   display: flex;
   justify-content: space-between;

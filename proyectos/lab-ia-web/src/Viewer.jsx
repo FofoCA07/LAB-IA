@@ -49,6 +49,12 @@ function Viewer({ activeSection, onSelectSection }) {
   const [openCode, setOpenCode] = useState(null);
   const [openCodeLoading, setOpenCodeLoading] = useState(true);
   const [openCodeError, setOpenCodeError] = useState('');
+  const [workspaceSummary, setWorkspaceSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState('');
+  const summaryPending = useRef(false);
+  const canAnalyzeWorkspace = !openCodeLoading && !openCodeError && openCode?.available
+    && openCode.running && openCode.cliAvailable && openCode.workspace !== null;
   const [workspaces, setWorkspaces] = useState([]);
   const [workspacesLoading, setWorkspacesLoading] = useState(true);
   const [workspacesError, setWorkspacesError] = useState('');
@@ -235,6 +241,42 @@ function Viewer({ activeSection, onSelectSection }) {
     void loadActiveWorkspace(controller.signal).catch(() => {});
     return () => controller.abort();
   }, [activeSection, loadActiveWorkspace]);
+
+  async function analyzeWorkspace() {
+    if (summaryPending.current || !canAnalyzeWorkspace) return;
+    summaryPending.current = true;
+    setSummaryLoading(true);
+    setSummaryError('');
+    setWorkspaceSummary(null);
+    try {
+      const response = await fetch('/api/lab/api/opencode/workspace-summary', { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(response.status === 409 ? 'Ya hay un análisis de OpenCode en curso.'
+          : response.status === 504 ? 'El análisis de OpenCode excedió el tiempo máximo.'
+            : response.status === 503 ? 'OpenCode o su workspace no están disponibles para analizar con Reviewer.'
+              : response.status === 502 ? (data?.error === 'No se pudo inspeccionar el workspace de forma segura.'
+                ? 'No se pudo inspeccionar el workspace de forma segura.'
+                : 'OpenCode no devolvió un resumen válido en el formato esperado.')
+              : 'No se pudo completar el análisis de OpenCode.');
+      }
+      if (data?.success !== true || data.agent !== 'reviewer'
+        || typeof data.workspace !== 'string' || !data.workspace.startsWith('/')
+        || !data.summary || typeof data.summary !== 'object' || Array.isArray(data.summary)
+        || Object.keys(data.summary).length !== 4
+        || !['tipo', 'proposito', 'limitaciones'].every((key) =>
+          typeof data.summary[key] === 'string' && data.summary[key].trim())
+        || !Array.isArray(data.summary.elementos) || data.summary.elementos.length > 100
+        || !data.summary.elementos.every((value) => typeof value === 'string' && value.trim())
+        || JSON.stringify(data.summary).length > 256 * 1024) throw new Error('OpenCode devolvió una respuesta no válida.');
+      setWorkspaceSummary(data);
+    } catch (error) {
+      setSummaryError(error instanceof TypeError ? 'No se pudo consultar OpenCode. Comprueba el servidor local.' : error.message);
+    } finally {
+      summaryPending.current = false;
+      setSummaryLoading(false);
+    }
+  }
 
   async function activateSelectedWorkspace() {
     if (activationPending.current || workspacesLoading || workspacesError
@@ -551,6 +593,30 @@ function Viewer({ activeSection, onSelectSection }) {
                       <div className="configuration-row"><dt>Workspace real detectado</dt><dd><code>{openCode.workspace ?? 'No detectado'}</code></dd></div>
                     </dl>
                   </>
+                )}
+              </section>
+              <section className="opencode-status section-card" aria-labelledby="workspace-summary-title">
+                <h2 id="workspace-summary-title">Análisis del workspace</h2>
+                <p>Agente: <strong>Reviewer</strong> · Solo lectura</p>
+                <button className="agent-select" type="button"
+                  disabled={!canAnalyzeWorkspace || summaryLoading}
+                  onClick={() => void analyzeWorkspace()}>Analizar workspace</button>
+                {summaryLoading && <p role="status">Analizando workspace...</p>}
+                {summaryError && <p className="chat-error" role="alert">{summaryError}</p>}
+                {workspaceSummary && (
+                  <div className="workspace-summary-result">
+                    <p role="status">Respuesta recibida de OpenCode.</p>
+                    <p>Workspace analizado: <code>{workspaceSummary.workspace}</code></p>
+                    <dl className="workspace-summary-response">
+                      <dt>Tipo de proyecto</dt><dd>{workspaceSummary.summary.tipo}</dd>
+                      <dt>Archivos y directorios principales</dt>
+                      <dd>{workspaceSummary.summary.elementos.length ? (
+                        <ul>{workspaceSummary.summary.elementos.map((element, index) => <li key={index}>{element}</li>)}</ul>
+                      ) : 'No se observaron archivos ni directorios.'}</dd>
+                      <dt>Propósito aparente</dt><dd>{workspaceSummary.summary.proposito}</dd>
+                      <dt>Limitaciones</dt><dd>{workspaceSummary.summary.limitaciones}</dd>
+                    </dl>
+                  </div>
                 )}
               </section>
             </>
