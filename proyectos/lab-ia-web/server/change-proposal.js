@@ -91,7 +91,11 @@ export function validatePatchStructure({ files, patch }, { recount = false } = {
       let previousContent = false;
       while (i < lines.length && !lines[i].startsWith('@@ ') && !lines[i].startsWith('diff --git ')) {
         const line = lines[i++];
-        if (line === '\\ No newline at end of file' && previousContent) { previousContent = false; continue; }
+        if (line === '\\ No newline at end of file') {
+          if (!previousContent) throw patchStructureFailure('invalid_hunk_body');
+          previousContent = false;
+          continue; // Metadata only: never contributes to old/new line counts.
+        }
         if (![' ', '+', '-'].includes(line[0])) throw patchStructureFailure('invalid_hunk_body');
         if (line[0] !== '+') oldLines++;
         if (line[0] !== '-') newLines++;

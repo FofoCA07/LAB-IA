@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { runInNewContext } from 'node:vm';
+import { createHash } from 'node:crypto';
 import { buildAuthorizedCatalog, readSelectedTextFiles, openTrackedRegularFile,
   createChangeProposalHandler, validatePatchStructure, proposalPhaseDeadline,
   runProposalGit, validateChangeRequest, validProposalPath } from './change-proposal.js';
@@ -815,3 +816,70 @@ test('timeout during target_files_validation stays TIMEOUT and still audits with
   assert.ok(!JSON.stringify(response.data).includes(privateMarker));
   assert.ok(!/stdout|stderr|path|stack/.test(JSON.stringify(response.data)));
 });
+
+const noNewlineMarker = '\\ No newline at end of file';
+const markerDiff = (body, header = '@@ -1 +1 @@') => ({
+  summary: 'Actualizar texto.', files: ['README.md'],
+  patch: `diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n${header}\n${body}\n`,
+});
+
+for (const [name, value] of [
+  ['removed line', markerDiff(`-old\n${noNewlineMarker}\n+new`)],
+  ['both removed and added lines', markerDiff(`-old\n${noNewlineMarker}\n+new\n${noNewlineMarker}`)],
+  ['context line', markerDiff(`-old\n+new\n context\n${noNewlineMarker}`, '@@ -1,2 +1,2 @@')],
+]) {
+  test(`exact newline marker accepted after ${name} without counting as body`, () => {
+    // Default strict mode validates counts; including the marker would fail.
+    assert.doesNotThrow(() => validatePatchStructure(value));
+  });
+}
+
+for (const [name, value, reason] of [
+  ['first hunk line', markerDiff(`${noNewlineMarker}\n-old\n+new`), 'invalid_hunk_body'],
+  ['consecutive markers', markerDiff(`-old\n${noNewlineMarker}\n${noNewlineMarker}\n+new`), 'invalid_hunk_body'],
+  ['trailing space', markerDiff(`-old\n${noNewlineMarker} \n+new`), 'invalid_hunk_body'],
+  ['lowercase variant', markerDiff('-old\n\\ no newline at end of file\n+new'), 'invalid_hunk_body'],
+  ['arbitrary backslash', markerDiff('-old\n\\ PRIVATE_ARBITRARY\n+new'), 'invalid_hunk_body'],
+  ['outside hunk', { ...markerDiff('-old\n+new'), patch: `${noNewlineMarker}\n${markerDiff('-old\n+new').patch}` }, 'unexpected_diff_header'],
+  ['between headers and hunk', { ...markerDiff('-old\n+new'), patch: markerDiff('-old\n+new').patch.replace('@@ -1', `${noNewlineMarker}\n@@ -1`) }, 'invalid_hunk_header'],
+  ['incorrect counts', markerDiff(`-old\n${noNewlineMarker}\n+new`, '@@ -1,2 +1 @@'), 'invalid_hunk_counts'],
+]) {
+  test(`newline marker rejects ${name} under strict grammar`, () => {
+    assert.throws(() => validatePatchStructure(value), (error) => {
+      assert.equal(error.publicCode, 'INVALID_PATCH_STRUCTURE');
+      assert.equal(error.patchStructureReason, reason);
+      assert.ok(!error.message.includes('PRIVATE_ARBITRARY'));
+      return true;
+    });
+  });
+}
+
+for (const resultHasNewline of [true, false]) {
+  test(`real Git check accepts no-newline original; result newline=${resultHasNewline}; fixture stays intact`, async (t) => {
+    const workspace = await fixture(t);
+    const original = Buffer.from('FUNCIONAAA X2', 'utf8');
+    await addHelperFile(workspace, 'README.md', original);
+    const originalIndex = await readFile(`${workspace}/.git/index`);
+    const value = markerDiff(`-FUNCIONAAA X2\n${noNewlineMarker}\n+LAB-IA funcionando correctamente.`
+      + (resultHasNewline ? '' : `\n${noNewlineMarker}`));
+    assert.doesNotThrow(() => validatePatchStructure(value));
+    let checks = 0;
+    const h = harness(workspace, { selection: ['README.md'], proposal: value, checkInput: (input) => {
+      checks++;
+      assert.equal(input, value.patch);
+    } });
+    const response = await h.invoke();
+    assert.equal(response.status, 200);
+    assert.equal(response.data.success, true);
+    assert.equal(response.data.proposal.patch, value.patch);
+    assert.equal(checks, 1);
+    assert.deepEqual(h.calls.filter((args) => args[0] === 'apply'), [
+      ['apply', '--check', '--recount', '--index', '--whitespace=error', '-'],
+    ]);
+    const after = await readFile(`${workspace}/README.md`);
+    assert.deepEqual(after, original);
+    assert.equal(createHash('sha256').update(after).digest('hex'),
+      '0bf0e59f51c458b7d44f5d03d880f8f1775a70a068d264089c194ead7cb8ddd4');
+    assert.deepEqual(await readFile(`${workspace}/.git/index`), originalIndex);
+  });
+}

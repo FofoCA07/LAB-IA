@@ -42,7 +42,15 @@ const systemMessage = 'Genera una propuesta determinista usando únicamente los 
   + 'files debe contener únicamente las rutas suministradas que propones modificar, sin duplicados. '
   + 'patch debe ser texto unified diff de Git dentro del campo JSON, con diff --git a/ruta b/ruta, '
   + '--- a/ruta, +++ b/ruta y cabeceras canónicas @@ -OLD_START,OLD_COUNT +NEW_START,NEW_COUNT @@ '
-  + '(puedes omitir el conteo cuando sea 1). Cada línea del hunk comienza por espacio, + o -. '
+  + '(puedes omitir el conteo cuando sea 1). Cada línea real del cuerpo del hunk comienza por espacio, + o -. '
+  + 'Respeta exactamente si el contenido original termina o no con newline. '
+  + 'Si una línea afectada del archivo original no termina con newline, usa exactamente el marcador '
+  + '\\ No newline at end of file inmediatamente después de la línea correspondiente del hunk. '
+  + 'Si el contenido resultante tampoco termina con newline, usa el mismo marcador '
+  + 'inmediatamente después de la línea añadida correspondiente. '
+  + 'No inventes ese marcador cuando no sea necesario. El marcador forma parte del unified diff, '
+  + 'no del contenido del archivo; es la única excepción al prefijo de las líneas reales del hunk. '
+  + 'El patch completo continúa terminando con newline. '
   + 'Propón el cambio mínimo y termina el patch con newline.';
 
 function proposalSchema() {
