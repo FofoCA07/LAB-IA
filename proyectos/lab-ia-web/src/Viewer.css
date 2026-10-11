@@ -248,6 +248,46 @@
   overflow-wrap: anywhere;
 }
 
+.change-proposal {
+  max-width: 960px;
+}
+
+.change-proposal textarea {
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.6;
+}
+
+.proposal-details dd {
+  margin: 6px 0 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.proposal-patch {
+  max-height: 560px;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-main);
+  color: var(--text);
+  font: 12px/1.7 var(--mono);
+  white-space: pre;
+}
+
+.section-card .proposal-notice {
+  color: var(--text-accent);
+  font-weight: 600;
+}
+
 .configuration-row {
   display: flex;
   justify-content: space-between;

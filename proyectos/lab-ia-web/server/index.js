@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { mkdir, open, opendir, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, resolve, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createChangeProposalHandler } from './change-proposal.js';
 
 const serverDir = dirname(await realpath(fileURLToPath(import.meta.url)));
 const labRoot = resolve(serverDir, '../../..');
@@ -669,9 +670,15 @@ async function conversations(request, response, path) {
   }
 }
 
+const changeProposal = createChangeProposalHandler({ getOpenCodeStatus, queryOpenCode, json });
+
 const server = createServer(async (request, response) => {
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
+  if (path === '/api/opencode/change-proposal') {
+    await changeProposal(request, response);
+    return;
+  }
   if (path === '/api/opencode/workspace-summary') {
     await workspaceSummary(request, response);
     return;

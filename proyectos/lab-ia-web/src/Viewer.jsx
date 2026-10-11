@@ -53,6 +53,11 @@ function Viewer({ activeSection, onSelectSection }) {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState('');
   const summaryPending = useRef(false);
+  const [changeRequest, setChangeRequest] = useState('');
+  const [proposalLoading, setProposalLoading] = useState(false);
+  const [proposalError, setProposalError] = useState('');
+  const [changeProposal, setChangeProposal] = useState(null);
+  const proposalPending = useRef(false);
   const canAnalyzeWorkspace = !openCodeLoading && !openCodeError && openCode?.available
     && openCode.running && openCode.cliAvailable && openCode.workspace !== null;
   const [workspaces, setWorkspaces] = useState([]);
@@ -243,7 +248,7 @@ function Viewer({ activeSection, onSelectSection }) {
   }, [activeSection, loadActiveWorkspace]);
 
   async function analyzeWorkspace() {
-    if (summaryPending.current || !canAnalyzeWorkspace) return;
+    if (summaryPending.current || proposalPending.current || !canAnalyzeWorkspace) return;
     summaryPending.current = true;
     setSummaryLoading(true);
     setSummaryError('');
@@ -313,6 +318,123 @@ function Viewer({ activeSection, onSelectSection }) {
     } finally {
       activationPending.current = false;
       setWorkspaceActivating(false);
+    }
+  }
+
+  async function generateChangeProposal() {
+    if (proposalPending.current || summaryPending.current || activationPending.current
+      || requestInProgress.current || openingRequest.current || !canAnalyzeWorkspace || !changeRequest.trim()) return;
+    proposalPending.current = true;
+    setProposalLoading(true);
+    setProposalError('');
+    setChangeProposal(null);
+    try {
+      const response = await fetch('/api/lab/api/opencode/change-proposal', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request: changeRequest.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const errors = {
+          BUSY: 'Ya hay una propuesta en curso.',
+          DIRTY_WORKSPACE: 'El repositorio debe estar completamente limpio: sin cambios ni archivos sin seguimiento.',
+          NOT_REPOSITORY: 'El workspace debe ser la raíz de un repositorio Git válido.',
+          NO_HEAD: 'El repositorio debe tener un HEAD válido.',
+          INVALID_REQUEST: 'Describe el cambio usando entre 1 y 4000 caracteres, sin caracteres de control.',
+          BODY_TOO_LARGE: 'La solicitud es demasiado grande.',
+          UNAVAILABLE: 'OpenCode o su workspace no están disponibles.',
+          READ_EVIDENCE_REQUIRED: 'Senior Developer no inspeccionó todos los archivos antes de generar la propuesta.',
+          UNSAFE_AGENT: 'No se pudo confirmar que Senior Developer tenga únicamente herramientas de lectura.',
+          INVALID_MODEL_RESPONSE: 'Senior Developer no devolvió una propuesta con el formato esperado.',
+          INVALID_PATCH_STRUCTURE: 'El diff generado no cumple la estructura segura requerida.',
+          INVALID_TARGET_FILES: 'La propuesta intenta modificar archivos que no están permitidos.',
+          PATCH_CHECK_FAILED: 'Git comprobó el diff, pero no puede aplicarse sobre el estado actual del proyecto.',
+          WORKSPACE_CHANGED: 'El workspace activo cambió durante la propuesta.',
+          HEAD_CHANGED: 'El HEAD cambió durante la propuesta. Genera una nueva propuesta sobre la base actual.',
+          WORKSPACE_NOT_SAFE: 'Error crítico: el workspace cambió o no se pudo confirmar que siga limpio. No se puede afirmar que la propuesta fue segura.',
+          TIMEOUT: 'La propuesta excedió el tiempo máximo.',
+        };
+        if (data?.code === 'PATCH_CHECK_FAILED') {
+          const reasons = {
+            index_metadata_mismatch: 'El diff contiene metadatos Git que no coinciden con el proyecto actual.',
+            content_or_context_mismatch: 'El contenido que el diff intenta modificar no coincide con el archivo actual.',
+            unknown: 'Git rechazó el diff y no se pudo determinar la causa de forma segura.',
+          };
+          throw new Error(Object.hasOwn(reasons, data.patchCheckReason)
+            ? reasons[data.patchCheckReason] : reasons.unknown);
+        }
+        if (data?.code === 'INVALID_PATCH_STRUCTURE') {
+          const reasons = {
+            missing_final_newline: 'El diff generado no terminó con el formato requerido.',
+            unexpected_diff_header: 'El diff generado contiene una cabecera de archivo no permitida.',
+            duplicate_file: 'El diff generado repite un archivo.',
+            invalid_index_line: 'El diff generado contiene una línea de índice con formato inválido.',
+            invalid_file_headers: 'El diff generado contiene cabeceras de archivo con formato inválido.',
+            invalid_hunk_header: 'El diff generado contiene un bloque de cambios con formato inválido.',
+            invalid_hunk_body: 'El diff generado contiene líneas de cambios con formato inválido.',
+            invalid_hunk_counts: 'El diff generado contiene conteos de líneas inconsistentes.',
+            no_changes: 'El diff generado no contiene cambios de texto.',
+            declared_files_mismatch: 'El diff generado no coincide con los archivos declarados.',
+          };
+          throw new Error(Object.hasOwn(reasons, data.patchStructureReason)
+            ? reasons[data.patchStructureReason] : errors.INVALID_PATCH_STRUCTURE);
+        }
+        if (data?.code === 'INVALID_MODEL_RESPONSE') {
+          const reasons = {
+            invalid_jsonl: 'La respuesta de Senior Developer no pudo procesarse.',
+            opencode_error: 'OpenCode informó un error al generar la propuesta.',
+            unexpected_tool: 'Senior Developer intentó utilizar una herramienta no permitida.',
+            invalid_text_event: 'La respuesta de Senior Developer no pudo procesarse.',
+            no_text: 'Senior Developer terminó sin devolver una propuesta.',
+            invalid_json: 'Senior Developer respondió, pero no produjo JSON válido.',
+            invalid_contract: 'Senior Developer produjo JSON, pero no cumplió el formato de propuesta.',
+          };
+          throw new Error(Object.hasOwn(reasons, data.modelResponseReason)
+            ? reasons[data.modelResponseReason] : errors.INVALID_MODEL_RESPONSE);
+        }
+        if (data?.code === 'TIMEOUT') {
+          const stages = {
+            body_validation: 'lectura y validación de la solicitud',
+            initial_opencode_status: 'consulta inicial de OpenCode',
+            repository_validation: 'validación del repositorio',
+            initial_git_status: 'estado inicial de Git', head_revision: 'consulta de HEAD',
+            debug_agent: 'verificación de Senior Developer', opencode_run: 'ejecución de Senior Developer',
+            parse_proposal: 'validación de la respuesta', target_files_validation: 'validación de archivos',
+            patch_check: 'comprobación del diff', final_opencode_status: 'consulta final de OpenCode',
+            final_git_audit: 'auditoría final de Git',
+          };
+          let message = Object.hasOwn(stages, data.stage)
+            ? `La propuesta excedió el tiempo máximo durante: ${stages[data.stage]}.` : errors.TIMEOUT;
+          const timing = data.timing;
+          if (Number.isFinite(timing?.elapsedMs) && timing.elapsedMs >= 0
+            && Number.isFinite(timing?.modelBudgetSeconds) && timing.modelBudgetSeconds >= 0) {
+            message += ` Tiempo consumido: ${(timing.elapsedMs / 1000).toFixed(1)} s. Presupuesto del modelo: ${timing.modelBudgetSeconds} s.`;
+          }
+          throw new Error(message);
+        }
+        throw new Error(Object.hasOwn(errors, data?.code) ? errors[data.code] : 'No se pudo generar una propuesta segura.');
+      }
+      const proposal = data?.proposal;
+      if (data?.success !== true || data.agent !== 'senior-developer'
+        || typeof data.workspace !== 'string' || !data.workspace.startsWith('/')
+        || typeof data.baseHead !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(data.baseHead)
+        || !proposal || typeof proposal !== 'object' || Array.isArray(proposal)
+        || Object.keys(proposal).length !== 3
+        || typeof proposal.summary !== 'string' || !proposal.summary.trim() || proposal.summary.length > 4000
+        || !Array.isArray(proposal.files) || proposal.files.length < 1 || proposal.files.length > 20
+        || !proposal.files.every((file) => typeof file === 'string' && file.trim())
+        || typeof proposal.patch !== 'string' || !proposal.patch.trim()
+        || new TextEncoder().encode(proposal.patch).length > 512 * 1024) {
+        throw new Error('El servidor devolvió una propuesta no válida.');
+      }
+      setChangeProposal(data);
+    } catch (failure) {
+      setProposalError(failure instanceof TypeError
+        ? 'No se pudo consultar el servidor local para generar la propuesta.'
+        : failure instanceof SyntaxError ? 'El servidor devolvió una respuesta no válida.' : failure.message);
+    } finally {
+      proposalPending.current = false;
+      setProposalLoading(false);
     }
   }
 
@@ -599,7 +721,7 @@ function Viewer({ activeSection, onSelectSection }) {
                 <h2 id="workspace-summary-title">Análisis del workspace</h2>
                 <p>Agente: <strong>Reviewer</strong> · Solo lectura</p>
                 <button className="agent-select" type="button"
-                  disabled={!canAnalyzeWorkspace || summaryLoading}
+                  disabled={!canAnalyzeWorkspace || summaryLoading || proposalLoading}
                   onClick={() => void analyzeWorkspace()}>Analizar workspace</button>
                 {summaryLoading && <p role="status">Analizando workspace...</p>}
                 {summaryError && <p className="chat-error" role="alert">{summaryError}</p>}
@@ -616,6 +738,38 @@ function Viewer({ activeSection, onSelectSection }) {
                       <dt>Propósito aparente</dt><dd>{workspaceSummary.summary.proposito}</dd>
                       <dt>Limitaciones</dt><dd>{workspaceSummary.summary.limitaciones}</dd>
                     </dl>
+                  </div>
+                )}
+              </section>
+              <section className="opencode-status section-card change-proposal" aria-labelledby="change-proposal-title">
+                <h2 id="change-proposal-title">Propuesta de cambio</h2>
+                <p>Agente: <strong>Senior Developer</strong> · Solo lectura</p>
+                <label className="composer-label" htmlFor="change-request">Describe el cambio que quieres realizar</label>
+                <textarea id="change-request" rows={4} maxLength={4000}
+                  placeholder="Describe el cambio que quieres realizar"
+                  value={changeRequest} disabled={proposalLoading}
+                  onChange={(event) => setChangeRequest(event.target.value)} />
+                <button className="agent-select" type="button"
+                  disabled={!canAnalyzeWorkspace || !changeRequest.trim() || proposalLoading || summaryLoading
+                    || workspaceActivating || isLoading || openingId !== null}
+                  onClick={() => void generateChangeProposal()}>Generar propuesta</button>
+                <p className="proposal-notice">Esta propuesta todavía no ha modificado archivos.</p>
+                {proposalLoading && <p role="status">Generando propuesta...</p>}
+                {proposalError && <p className="chat-error" role="alert">{proposalError}</p>}
+                {changeProposal && (
+                  <div className="workspace-summary-result">
+                    <p role="status">Propuesta recibida.</p>
+                    <dl className="proposal-details">
+                      <dt>Agente</dt><dd>Senior Developer</dd>
+                      <dt>Workspace</dt><dd><code>{changeProposal.workspace}</code></dd>
+                      <dt>HEAD base</dt><dd><code>{changeProposal.baseHead}</code></dd>
+                      <dt>Resumen</dt><dd>{changeProposal.proposal.summary}</dd>
+                      <dt>Archivos afectados</dt>
+                      <dd><ul>{changeProposal.proposal.files.map((file) => <li key={file}><code>{file}</code></li>)}</ul></dd>
+                    </dl>
+                    <h3>Diff propuesto</h3>
+                    <pre className="proposal-patch" tabIndex={0} aria-label="Diff propuesto"><code>{changeProposal.proposal.patch}</code></pre>
+                    <p className="proposal-notice">Esta propuesta todavía no ha modificado archivos.</p>
                   </div>
                 )}
               </section>
