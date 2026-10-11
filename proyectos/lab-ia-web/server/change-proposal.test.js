@@ -4,7 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Readable } from 'node:stream';
-import { changeProposalConfig, createChangeProposalHandler, parseChangeProposal,
+import { buildAuthorizedCatalog, readSelectedTextFiles, openTrackedRegularFile,
+  changeProposalConfig, createChangeProposalHandler, parseChangeProposal,
   validatePatchStructure, proposalModelBudgetSeconds, modelTimeoutSource, runProposalGit, validateChangeRequest, validateProposalPolicy, validProposalPath } from './change-proposal.js';
 
 const head = 'a'.repeat(40);
@@ -669,3 +670,190 @@ for (const inputPath of ['/workspace/README.md', 'README.md', './README.md', 'wo
     assert.ok(!JSON.stringify(response.data).includes('PRIVATE_READ_CONTENT'));
   });
 }
+
+const helperDeadline = () => Date.now() + 30_000;
+const indexEntry = (path, mode = '100644', stage = '0') => `${mode} ${head} ${stage}\t${path}\0`;
+const simulatedIndex = (output) => async (_workspace, args, { deadline }) => {
+  assert.deepEqual(args.slice(0, 3), ['ls-files', '--stage', '-z']);
+  assert.ok(deadline > Date.now());
+  return output;
+};
+async function assertSafeHelperRejection(operation, code = 'FILE_VALIDATION_FAILED') {
+  await assert.rejects(operation, (error) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.code, code);
+    assert.deepEqual(Object.keys(error), ['code']);
+    assert.equal(error.publicCode, undefined);
+    const details = String(error) + JSON.stringify(error);
+    assert.ok(!/PRIVATE|SECRET|\.env|stderr|stdout|diff --git|ELOOP|ENOENT/.test(details));
+    assert.equal(error.cause, undefined);
+    assert.equal(error.path, undefined);
+    return true;
+  });
+}
+async function addHelperFile(workspace, path, content) {
+  await writeFile(`${workspace}/${path}`, content);
+  execFileSync('git', ['add', '--', path], { cwd: workspace });
+}
+
+test('catalog uses real staged modes, excludes symlinks/submodules/sensitive paths and sorts', async (t) => {
+  const workspace = await fixture(t);
+  await addHelperFile(workspace, 'z.txt', 'z');
+  await addHelperFile(workspace, 'a.txt', 'a');
+  execFileSync('git', ['update-index', '--chmod=+x', 'z.txt'], { cwd: workspace });
+  execFileSync('git', ['update-index', '--add', '--cacheinfo', `160000,${head},submodule`], { cwd: workspace });
+  const before = await readFile(`${workspace}/.git/index`);
+  assert.deepEqual(await buildAuthorizedCatalog(workspace, helperDeadline()), ['a.txt', 'binary.bin', 'example.txt', 'z.txt']);
+  assert.deepEqual(await readFile(`${workspace}/.git/index`), before);
+});
+
+test('catalog excludes nonzero stages and unknown modes without opening their paths', async (t) => {
+  const workspace = await fixture(t);
+  const git = simulatedIndex(indexEntry('example.txt') + indexEntry('absent.txt', '100644', '1')
+    + indexEntry('other.txt', '040000') + indexEntry('alias.txt', '120000')
+    + indexEntry('module', '160000') + indexEntry('.env') + indexEntry('../outside.txt'));
+  assert.deepEqual(await buildAuthorizedCatalog(workspace, helperDeadline(), git), ['example.txt']);
+});
+
+test('catalog rejects duplicate records and malformed Git output safely', async (t) => {
+  const workspace = await fixture(t);
+  for (const output of [indexEntry('example.txt').repeat(2), 'PRIVATE_GIT_STDERR', indexEntry('example.txt').slice(0, -1)]) {
+    await assertSafeHelperRejection(buildAuthorizedCatalog(workspace, helperDeadline(), simulatedIndex(output)));
+  }
+});
+
+for (const kind of ['final symlink', 'intermediate symlink', 'special file']) {
+  test(`secure helpers reject ${kind} even with simulated regular Git mode`, async (t) => {
+    const workspace = await fixture(t);
+    let path;
+    if (kind === 'final symlink') path = 'alias.txt';
+    else if (kind === 'intermediate symlink') {
+      await mkdir(`${workspace}/real`);
+      await writeFile(`${workspace}/real/data.txt`, 'PRIVATE_CONTENT');
+      await symlink('real', `${workspace}/linked`);
+      path = 'linked/data.txt';
+    } else {
+      path = 'pipe.txt';
+      execFileSync('mkfifo', [`${workspace}/${path}`]);
+    }
+    const git = simulatedIndex(indexEntry(path));
+    await assertSafeHelperRejection(buildAuthorizedCatalog(workspace, helperDeadline(), git));
+    await assertSafeHelperRejection(readSelectedTextFiles(workspace, [path], helperDeadline(), git));
+  });
+}
+
+test('catalog accepts all 1000 authorized files and never truncates 1001', async (t) => {
+  const workspace = await fixture(t);
+  const paths = Array.from({ length: 1000 }, (_, i) => `catalog-${String(i).padStart(4, '0')}.txt`);
+  for (const path of paths) await writeFile(`${workspace}/${path}`, '');
+  assert.deepEqual(await buildAuthorizedCatalog(workspace, helperDeadline(),
+    simulatedIndex([...paths].reverse().map((path) => indexEntry(path)).join(''))), paths);
+  await assertSafeHelperRejection(buildAuthorizedCatalog(workspace, helperDeadline(),
+    simulatedIndex([...paths, 'extra.txt'].map((path) => indexEntry(path)).join(''))), 'AUTHORIZED_CATALOG_TOO_LARGE');
+});
+
+for (const [name, bytes, expected] of [
+  ['ASCII', Buffer.from('exact text\n'), 'exact text\n'],
+  ['CRLF', Buffer.from('first\r\nsecond\r\n'), 'first\r\nsecond\r\n'],
+  ['no final newline', Buffer.from('last line'), 'last line'],
+  ['Unicode across chunks', Buffer.from('x'.repeat(4095) + '€ñ😀'), 'x'.repeat(4095) + '€ñ😀'],
+  ['UTF-8 BOM', Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x62, 0x63]), '\uFEFFabc'],
+]) {
+  test(`selected read preserves ${name} exactly`, async (t) => {
+    const workspace = await fixture(t);
+    await addHelperFile(workspace, 'data.txt', bytes);
+    const before = await readFile(`${workspace}/.git/index`);
+    assert.deepEqual(await readSelectedTextFiles(workspace, ['data.txt'], helperDeadline()), [{ path: 'data.txt', content: expected }]);
+    assert.deepEqual(await readFile(`${workspace}/data.txt`), bytes);
+    assert.deepEqual(await readFile(`${workspace}/.git/index`), before);
+  });
+}
+
+for (const [name, bytes] of [
+  ['NUL', Buffer.from('PRIVATE_CONTENT\0')],
+  ['invalid UTF-8', Buffer.from([0xff])],
+  ['incomplete UTF-8', Buffer.from([0xe2, 0x82])],
+  ['over 16 KiB', Buffer.from('x'.repeat(16385))],
+]) {
+  test(`selected read rejects ${name} safely`, async (t) => {
+    const workspace = await fixture(t);
+    await addHelperFile(workspace, 'data.txt', bytes);
+    await assertSafeHelperRejection(readSelectedTextFiles(workspace, ['data.txt'], helperDeadline()),
+      name === 'over 16 KiB' ? 'SELECTED_FILE_TOO_LARGE' : 'FILE_VALIDATION_FAILED');
+    assert.deepEqual(await readFile(`${workspace}/data.txt`), bytes);
+  });
+}
+
+test('selected read accepts exactly 16 KiB/file and 32 KiB total; rejects excess total', async (t) => {
+  const workspace = await fixture(t);
+  const content = 'x'.repeat(16384);
+  await addHelperFile(workspace, 'a.txt', content);
+  await addHelperFile(workspace, 'b.txt', content);
+  await addHelperFile(workspace, 'c.txt', 'x');
+  const before = await readFile(`${workspace}/.git/index`);
+  assert.deepEqual(await readSelectedTextFiles(workspace, ['a.txt', 'b.txt'], helperDeadline()), [
+    { path: 'a.txt', content }, { path: 'b.txt', content },
+  ]);
+  await assertSafeHelperRejection(readSelectedTextFiles(workspace, ['a.txt', 'b.txt', 'c.txt'], helperDeadline()),
+    'SELECTED_CONTENT_TOO_LARGE');
+  assert.deepEqual(await readFile(`${workspace}/.git/index`), before);
+});
+
+test('selected read rejects 21 distinct paths before Git', async (t) => {
+  const workspace = await fixture(t);
+  const paths = Array.from({ length: 21 }, (_, i) => `selected-${i}.txt`);
+  assert.equal(new Set(paths).size, 21);
+  let calls = 0;
+  await assertSafeHelperRejection(readSelectedTextFiles(workspace, paths, helperDeadline(), async () => { calls++; return ''; }));
+  assert.equal(calls, 0);
+});
+
+test('selected read rejects duplicate paths before Git', async (t) => {
+  const workspace = await fixture(t);
+  let calls = 0;
+  await assertSafeHelperRejection(readSelectedTextFiles(workspace, ['example.txt', 'example.txt'], helperDeadline(),
+    async () => { calls++; return ''; }));
+  assert.equal(calls, 0);
+});
+
+test('selected read rejects invalid and untracked paths', async (t) => {
+  const workspace = await fixture(t);
+  let calls = 0;
+  const git = async () => { calls++; return ''; };
+  for (const paths of [[],
+    ['../example.txt'], ['/example.txt'], ['.env']]) {
+    await assertSafeHelperRejection(readSelectedTextFiles(workspace, paths, helperDeadline(), git));
+  }
+  assert.equal(calls, 0);
+  await assertSafeHelperRejection(readSelectedTextFiles(workspace, ['missing.txt'], helperDeadline()));
+  for (const entry of [indexEntry('example.txt', '160000'), indexEntry('example.txt', '100644', '1')]) {
+    await assertSafeHelperRejection(readSelectedTextFiles(workspace, ['example.txt'], helperDeadline(), simulatedIndex(entry)));
+  }
+});
+
+test('helpers check deadline before Git and after Git without exposing process failures', async (t) => {
+  const workspace = await fixture(t);
+  const never = async () => assert.fail('expired deadline must not execute Git');
+  await assertSafeHelperRejection(buildAuthorizedCatalog(workspace, Date.now() - 1, never), 'FILE_OPERATION_TIMEOUT');
+  await assertSafeHelperRejection(readSelectedTextFiles(workspace, ['example.txt'], Date.now() - 1, never), 'FILE_OPERATION_TIMEOUT');
+  const deadline = Date.now() + 10;
+  const slow = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return indexEntry('example.txt');
+  };
+  await assertSafeHelperRejection(buildAuthorizedCatalog(workspace, deadline, slow), 'FILE_OPERATION_TIMEOUT');
+  const failing = async () => { throw Object.assign(new Error('PRIVATE_GIT'), {
+    code: 'FILE_OPERATION_TIMEOUT', stderr: 'PRIVATE_STDERR', stdout: 'PRIVATE_STDOUT', cause: 'PRIVATE_CAUSE',
+  }); };
+  await assertSafeHelperRejection(buildAuthorizedCatalog(workspace, helperDeadline(), failing));
+  await assertSafeHelperRejection(readSelectedTextFiles(workspace, ['example.txt'], helperDeadline(), failing));
+});
+
+test('opening helper rejects escapes, submodule modes and expired deadlines', async (t) => {
+  const workspace = await fixture(t);
+  for (const [path, mode, deadline] of [['../example.txt', '100644', helperDeadline()],
+    ['example.txt', '160000', helperDeadline()], ['example.txt', '100644', Date.now() - 1]]) {
+    await assertSafeHelperRejection(openTrackedRegularFile(workspace, path, mode, deadline),
+      deadline <= Date.now() ? 'FILE_OPERATION_TIMEOUT' : 'FILE_VALIDATION_FAILED');
+  }
+});

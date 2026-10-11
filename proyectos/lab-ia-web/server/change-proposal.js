@@ -333,28 +333,162 @@ export function runProposalGit(workspace, args, { input, deadline = Date.now() +
   });
 }
 
-async function verifyTrackedTextFiles(workspace, files, git, deadline) {
-  const output = await git(workspace, ['ls-files', '--stage', '-z', '--', ...files], { deadline });
-  const tracked = new Map(output.split('\0').filter(Boolean).map((entry) => {
-    const match = /^(100644|100755) [a-f0-9]+ 0\t(.+)$/.exec(entry);
-    if (!match) throw new Error('Not a tracked regular file.');
-    return [match[2], match[1]];
+const fileHelperMessages = Object.freeze({
+  FILE_OPERATION_TIMEOUT: 'File operation timed out.',
+  FILE_VALIDATION_FAILED: 'File validation failed.',
+  AUTHORIZED_CATALOG_TOO_LARGE: 'Authorized catalog too large.',
+  SELECTED_FILE_TOO_LARGE: 'Selected file too large.',
+  SELECTED_CONTENT_TOO_LARGE: 'Selected content too large.',
+});
+const safeFileHelperErrors = new WeakSet();
+
+function fileHelperError(code = 'FILE_VALIDATION_FAILED') {
+  if (!Object.hasOwn(fileHelperMessages, code)) code = 'FILE_VALIDATION_FAILED';
+  const error = Object.assign(new Error(fileHelperMessages[code]), { code });
+  safeFileHelperErrors.add(error);
+  return error;
+}
+
+function sanitizeFileHelperError(error) {
+  // Only errors created here may retain a reason. Never trust external codes.
+  return safeFileHelperErrors.has(error) ? error : fileHelperError();
+}
+
+function checkFileDeadline(deadline) {
+  if (!Number.isFinite(deadline) || Date.now() >= deadline) {
+    throw fileHelperError('FILE_OPERATION_TIMEOUT');
+  }
+}
+
+// Caller supplies a stage-0 regular-file mode established from Git.
+// Returned handle belongs to the caller and must always be closed.
+export async function openTrackedRegularFile(workspace, path, mode, deadline) {
+  let directory;
+  let file;
+  try {
+    checkFileDeadline(deadline);
+    if (!validProposalPath(path) || !['100644', '100755'].includes(mode)) throw fileHelperError();
+    directory = await open(workspace, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const components = path.split('/');
+    for (const name of components.slice(0, -1)) {
+      checkFileDeadline(deadline);
+      const next = await open(`/proc/self/fd/${directory.fd}/${name}`,
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      const previous = directory;
+      directory = next;
+      await previous.close();
+    }
+    checkFileDeadline(deadline);
+    file = await open(`/proc/self/fd/${directory.fd}/${components.at(-1)}`,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!(await file.stat()).isFile()) throw fileHelperError();
+    checkFileDeadline(deadline);
+    await directory.close();
+    directory = undefined;
+    const result = file;
+    file = undefined;
+    return result;
+  } catch (error) {
+    throw sanitizeFileHelperError(error);
+  } finally {
+    await file?.close().catch(() => {});
+    await directory?.close().catch(() => {});
+  }
+}
+
+function trackedEntries(output) {
+  if (typeof output !== 'string' || (output && !output.endsWith('\0'))) throw fileHelperError();
+  const seen = new Set();
+  return output.split('\0').filter(Boolean).map((entry) => {
+    const match = /^(\d{6}) [a-f0-9]+ ([0-3])\t([^\0]+)$/.exec(entry);
+    if (!match || seen.has(match[3])) throw fileHelperError();
+    seen.add(match[3]);
+    return { mode: match[1], stage: match[2], path: match[3] };
+  });
+}
+
+async function selectedTrackedEntries(workspace, paths, git, deadline) {
+  checkFileDeadline(deadline);
+  const entries = trackedEntries(await git(workspace, ['ls-files', '--stage', '-z', '--', ...paths], { deadline }));
+  checkFileDeadline(deadline);
+  const tracked = new Map(entries.map(({ path, mode, stage }) => {
+    if (stage !== '0' || !['100644', '100755'].includes(mode)) throw fileHelperError();
+    return [path, mode];
   }));
-  if (tracked.size !== files.length || !files.every((file) => tracked.has(file))) throw new Error('Untracked path.');
+  if (tracked.size !== paths.length || !paths.every((path) => tracked.has(path))) throw fileHelperError();
+  return tracked;
+}
+
+// Unconnected preparation helper: no content is read to build the catalog.
+export async function buildAuthorizedCatalog(workspace, deadline, git = runProposalGit) {
+  try {
+    checkFileDeadline(deadline);
+    const entries = trackedEntries(await git(workspace, ['ls-files', '--stage', '-z'], { deadline }));
+    checkFileDeadline(deadline);
+    const candidates = entries.filter(({ mode, stage, path }) => stage === '0'
+      && ['100644', '100755'].includes(mode) && validProposalPath(path));
+    if (candidates.length > 1000) throw fileHelperError('AUTHORIZED_CATALOG_TOO_LARGE');
+    const catalog = [];
+    for (const { path, mode } of candidates) {
+      checkFileDeadline(deadline);
+      const file = await openTrackedRegularFile(workspace, path, mode, deadline);
+      try { catalog.push(path); }
+      finally { await file.close(); }
+    }
+    checkFileDeadline(deadline);
+    return catalog.sort();
+  } catch (error) {
+    throw sanitizeFileHelperError(error);
+  }
+}
+
+// Unconnected preparation helper: bytes are bounded before decoding/retention.
+export async function readSelectedTextFiles(workspace, paths, deadline, git = runProposalGit) {
+  try {
+    checkFileDeadline(deadline);
+    if (!Array.isArray(paths) || paths.length < 1 || paths.length > 20
+      || new Set(paths).size !== paths.length || !paths.every(validProposalPath)) throw fileHelperError();
+    const tracked = await selectedTrackedEntries(workspace, paths, git, deadline);
+    let total = 0;
+    const result = [];
+    for (const path of paths) {
+      checkFileDeadline(deadline);
+      const file = await openTrackedRegularFile(workspace, path, tracked.get(path), deadline);
+      try {
+        const buffer = Buffer.alloc(4096);
+        // ignoreBOM=true preserves an initial UTF-8 BOM as U+FEFF.
+        const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+        let size = 0;
+        let content = '';
+        while (true) {
+          checkFileDeadline(deadline);
+          const { bytesRead } = await file.read(buffer, 0, buffer.length, size);
+          checkFileDeadline(deadline);
+          if (!bytesRead) break;
+          size += bytesRead;
+          total += bytesRead;
+          if (size > 16 * 1024) throw fileHelperError('SELECTED_FILE_TOO_LARGE');
+          if (total > 32 * 1024) throw fileHelperError('SELECTED_CONTENT_TOO_LARGE');
+          const bytes = buffer.subarray(0, bytesRead);
+          if (bytes.includes(0)) throw fileHelperError();
+          content += decoder.decode(bytes, { stream: true });
+        }
+        content += decoder.decode();
+        result.push({ path, content });
+      } finally { await file.close(); }
+    }
+    checkFileDeadline(deadline);
+    return result;
+  } catch (error) {
+    throw sanitizeFileHelperError(error);
+  }
+}
+
+async function verifyTrackedTextFiles(workspace, files, git, deadline) {
+  const tracked = await selectedTrackedEntries(workspace, files, git, deadline);
   for (const path of files) {
-    let directory = await open(workspace, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    let file;
+    const file = await openTrackedRegularFile(workspace, path, tracked.get(path), deadline);
     try {
-      const components = path.split('/');
-      for (const name of components.slice(0, -1)) {
-        const next = await open(`/proc/self/fd/${directory.fd}/${name}`,
-          constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-        await directory.close();
-        directory = next;
-      }
-      file = await open(`/proc/self/fd/${directory.fd}/${components.at(-1)}`,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      if (!(await file.stat()).isFile()) throw new Error();
       const buffer = Buffer.alloc(64 * 1024);
       const decoder = new TextDecoder('utf-8', { fatal: true });
       let offset = 0;
@@ -368,7 +502,7 @@ async function verifyTrackedTextFiles(workspace, files, git, deadline) {
         offset += bytesRead;
       }
       decoder.decode();
-    } finally { await file?.close(); await directory.close(); }
+    } finally { await file.close(); }
   }
 }
 
