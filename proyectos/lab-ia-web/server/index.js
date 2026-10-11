@@ -184,7 +184,7 @@ async function openCodeStatus(request, response) {
   }
 }
 
-async function getOpenCodeStatus() {
+async function getOpenCodeStatus({ checkCLI = true } = {}) {
   const status = { available: false, running: false, workspace: null, cliAvailable: false, version: null };
   let output;
   try {
@@ -202,7 +202,7 @@ async function getOpenCodeStatus() {
   status.available = true;
   status.running = running;
   status.workspace = typeof mount?.Source === 'string' && mount.Source ? mount.Source : null;
-  if (running) {
+  if (running && checkCLI) {
     // The non-interactive --version flag was verified in the container.
     try {
       const version = await queryOpenCode(['exec', '--workdir', '/', 'opencode', 'opencode', '--version']);
@@ -670,7 +670,7 @@ async function conversations(request, response, path) {
   }
 }
 
-const changeProposal = createChangeProposalHandler({ getOpenCodeStatus, queryOpenCode, json });
+const changeProposal = createChangeProposalHandler({ getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
 
 const server = createServer(async (request, response) => {
   // Validate the raw path, without URL normalization that could hide traversal.

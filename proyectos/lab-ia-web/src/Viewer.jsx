@@ -343,7 +343,6 @@ function Viewer({ activeSection, onSelectSection }) {
           INVALID_REQUEST: 'Describe el cambio usando entre 1 y 4000 caracteres, sin caracteres de control.',
           BODY_TOO_LARGE: 'La solicitud es demasiado grande.',
           UNAVAILABLE: 'OpenCode o su workspace no están disponibles.',
-          READ_EVIDENCE_REQUIRED: 'Senior Developer no inspeccionó todos los archivos antes de generar la propuesta.',
           UNSAFE_AGENT: 'No se pudo confirmar que Senior Developer tenga únicamente herramientas de lectura.',
           INVALID_MODEL_RESPONSE: 'Senior Developer no devolvió una propuesta con el formato esperado.',
           INVALID_PATCH_STRUCTURE: 'El diff generado no cumple la estructura segura requerida.',
@@ -415,7 +414,7 @@ function Viewer({ activeSection, onSelectSection }) {
         throw new Error(Object.hasOwn(errors, data?.code) ? errors[data.code] : 'No se pudo generar una propuesta segura.');
       }
       const proposal = data?.proposal;
-      if (data?.success !== true || data.agent !== 'senior-developer'
+      if (data?.success !== true || data.engine !== 'ollama-deterministic'
         || typeof data.workspace !== 'string' || !data.workspace.startsWith('/')
         || typeof data.baseHead !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(data.baseHead)
         || !proposal || typeof proposal !== 'object' || Array.isArray(proposal)
@@ -743,7 +742,7 @@ function Viewer({ activeSection, onSelectSection }) {
               </section>
               <section className="opencode-status section-card change-proposal" aria-labelledby="change-proposal-title">
                 <h2 id="change-proposal-title">Propuesta de cambio</h2>
-                <p>Agente: <strong>Senior Developer</strong> · Solo lectura</p>
+                <p>Motor: <strong>Ollama · generación determinista</strong> · Solo lectura</p>
                 <label className="composer-label" htmlFor="change-request">Describe el cambio que quieres realizar</label>
                 <textarea id="change-request" rows={4} maxLength={4000}
                   placeholder="Describe el cambio que quieres realizar"
@@ -760,7 +759,7 @@ function Viewer({ activeSection, onSelectSection }) {
                   <div className="workspace-summary-result">
                     <p role="status">Propuesta recibida.</p>
                     <dl className="proposal-details">
-                      <dt>Agente</dt><dd>Senior Developer</dd>
+                      <dt>Motor</dt><dd>Ollama · generación determinista</dd>
                       <dt>Workspace</dt><dd><code>{changeProposal.workspace}</code></dd>
                       <dt>HEAD base</dt><dd><code>{changeProposal.baseHead}</code></dd>
                       <dt>Resumen</dt><dd>{changeProposal.proposal.summary}</dd>
