@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, stat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { runInNewContext } from 'node:vm';
@@ -11,10 +11,12 @@ import { buildAuthorizedCatalog, readSelectedTextFiles, openTrackedRegularFile,
   runProposalGit, validateChangeRequest, validProposalPath } from './change-proposal.js';
 import { selectProposalFiles } from './file-selection.js';
 import { generateDeterministicProposal } from './deterministic-proposal.js';
+import { generateDeterministicDiff } from './deterministic-diff.js';
 
 const head = 'a'.repeat(40);
 const patch = 'diff --git a/example.txt b/example.txt\n--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-before\n+after\n';
 const proposal = { summary: 'Actualizar el texto.', files: ['example.txt'], patch };
+const contentProposal = { summary: proposal.summary, files: [{ path: 'example.txt', content: 'after\n' }] };
 const privateMarker = 'PRIVATE_REQUEST_CONTENT_RAW_HASH';
 async function fixture(t) {
   const parent = resolve(import.meta.dirname, '../dist');
@@ -87,12 +89,17 @@ function harness(workspace, options = {}) {
       options.generationInput?.(input, dependencies);
       if (options.nativePhases) return generateDeterministicProposal(input, dependencies);
       if (options.generateProposal) return options.generateProposal(input, dependencies);
-      return generateDeterministicProposal(input, { ...dependencies,
-        generate: async (args) => {
-          assert.equal(args.messages.length, 2);
-          assert.equal(Object.hasOwn(args, 'tools'), false);
-          return JSON.stringify(options.proposal ?? proposal);
-        } });
+      return options.phase2 ?? { summary: (options.proposal ?? proposal).summary,
+        files: (options.proposal ?? proposal).files.map((path) => ({ path, content: 'after\n' })) };
+    },
+    generateDiff: async (input, dependencies) => {
+      events.push('diff');
+      options.diffInput?.(input, dependencies);
+      if (options.generateDiff) return options.generateDiff(input, dependencies);
+      if (options.nativePhases || options.realDiff) return generateDeterministicDiff(input, dependencies);
+      const value = options.proposal ?? proposal;
+      // Malformed assembled-diff tests can deliberately omit a declared header.
+      return { changed: true, path: input.path, patch: input.path === value.files[0] ? value.patch : '+after\n' };
     },
     json: (response, status, data) => Object.assign(response, { status, data }),
   });
@@ -579,13 +586,140 @@ test('changed snapshot rejects even when simulated Git reports clean', async (t)
   const workspace = await fixture(t);
   const h = harness(workspace, { generateProposal: async () => {
     await writeFile(`${workspace}/example.txt`, 'PRIVATE_CHANGED_CONTENT');
-    return structuredClone(proposal);
+    return structuredClone(contentProposal);
   } });
   const r = await h.invoke();
   assert.equal(r.data.code, 'WORKSPACE_CHANGED');
   assert.ok(!JSON.stringify(r.data).includes('PRIVATE_CHANGED_CONTENT'));
   assert.ok(!h.calls.some((args) => args[0] === 'apply'));
+  assert.ok(!h.events.includes('diff'));
 });
+
+test('diff gets original/new contents and a shared work deadline after snapshot reread', async (t) => {
+  const workspace = await fixture(t);
+  await addHelperFile(workspace, 'a.txt', 'original a\n');
+  let trackedReads = 0;
+  let phaseDeadline;
+  const received = [];
+  const h = harness(workspace, { selection: ['example.txt', 'a.txt'],
+    phase2: { summary: 'Cambiar dos archivos.', files: [
+      { path: 'example.txt', content: 'after\n' }, { path: 'a.txt', content: 'changed a\n' },
+    ] },
+    generationInput: (input) => { phaseDeadline = input.deadline; },
+    readCheck: () => { trackedReads++; },
+    generateDiff: async (input, dependencies) => {
+      assert.equal(trackedReads, 2, 'first read and fingerprint reread precede diff');
+      assert.deepEqual(Object.keys(input).sort(), ['deadline', 'originalContent', 'path', 'proposedContent']);
+      assert.equal(dependencies.validatePath, validProposalPath);
+      received.push(input);
+      return generateDeterministicDiff(input, dependencies);
+    },
+  });
+  const before = await readFile(`${workspace}/.git/index`);
+  const result = await h.invoke();
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.data.proposal.files, ['a.txt', 'example.txt']);
+  assert.deepEqual(received.map(({ path, originalContent, proposedContent }) => ({ path, originalContent, proposedContent })), [
+    { path: 'a.txt', originalContent: 'original a\n', proposedContent: 'changed a\n' },
+    { path: 'example.txt', originalContent: 'before\n', proposedContent: 'after\n' },
+  ]);
+  assert.equal(received[0].deadline, received[1].deadline);
+  assert.ok(received[0].deadline >= phaseDeadline + 10_000);
+  assert.ok(result.data.proposal.patch.indexOf('a/a.txt') < result.data.proposal.patch.indexOf('a/example.txt'));
+  assert.deepEqual(await readFile(`${workspace}/.git/index`), before);
+});
+
+for (const allIdentical of [false, true]) {
+  test(`identical proposed files excluded; all identical=${allIdentical}`, async (t) => {
+    const workspace = await fixture(t);
+    await addHelperFile(workspace, 'other.txt', 'same\n');
+    const h = harness(workspace, { realDiff: true, selection: ['example.txt', 'other.txt'],
+      phase2: { summary: 'Texto.', files: [
+        { path: 'example.txt', content: allIdentical ? 'before\n' : 'after\n' },
+        { path: 'other.txt', content: 'same\n' },
+      ] } });
+    const result = await h.invoke();
+    if (allIdentical) {
+      assert.equal(result.data.code, 'INVALID_PATCH_STRUCTURE');
+      assert.equal(result.data.patchStructureReason, 'no_changes');
+      assert.ok(!h.calls.some((args) => args[0] === 'apply'));
+    } else {
+      assert.equal(result.status, 200); assert.deepEqual(result.data.proposal.files, ['example.txt']);
+      assert.ok(!result.data.proposal.patch.includes('other.txt'));
+    }
+    assert.equal(h.calls.at(-1).join(' '), 'rev-parse HEAD');
+  });
+}
+
+for (const [name, phase2] of [
+  ['invented', { summary: 'Texto.', files: [{ path: 'PRIVATE_UNKNOWN', content: privateMarker }] }],
+  ['duplicate', { summary: 'Texto.', files: [contentProposal.files[0], contentProposal.files[0]] }],
+  ['additional key', { ...contentProposal, extra: privateMarker }],
+  ['old contract', proposal], ['invalid summary', { ...contentProposal, summary: null }],
+  ['invalid file', { summary: 'Texto.', files: [{ path: 'example.txt', content: null }] }],
+  ['extra file property', { summary: 'Texto.', files: [{ ...contentProposal.files[0], extra: privateMarker }] }],
+  ['nonplain', Object.assign(Object.create({ privateMarker }), contentProposal)],
+]) {
+  test(`untrusted phase 2 ${name} rejected before diff`, async (t) => {
+    const h = harness(await fixture(t), { phase2 });
+    const result = await h.invoke();
+    assert.equal(result.data.code, 'DETERMINISTIC_MODEL_INVALID');
+    assert.ok(!JSON.stringify(result.data).includes(privateMarker));
+    assert.ok(!h.events.includes('diff')); assert.ok(!h.calls.some((args) => args[0] === 'apply'));
+  });
+}
+
+for (const code of ['DIFF_TIMEOUT', 'DIFF_INPUT_INVALID', 'DIFF_PROCESS_FAILED', 'DIFF_OUTPUT_TOO_LARGE', 'DIFF_INVALID_OUTPUT']) {
+  test(`diff error ${code} is mapped safely and final audit still runs`, async (t) => {
+    const h = harness(await fixture(t), { generateDiff: async () => {
+      throw { code, publicCode: 'PRIVATE', status: 200, message: privateMarker,
+        stdout: patch, stderr: privateMarker, pid: 1234, path: '/proc/self/fd/3' };
+    } });
+    const result = await h.invoke({ request: privateMarker });
+    assert.equal(result.data.code, code === 'DIFF_TIMEOUT' ? 'TIMEOUT' : 'FAILED');
+    if (code === 'DIFF_TIMEOUT') assert.equal(result.data.stage, 'deterministic_diff');
+    assert.ok(!/PRIVATE|diff --git|\/proc|stdout|stderr|pid/.test(JSON.stringify(result.data)));
+    assert.ok(!h.calls.some((args) => args[0] === 'apply'));
+    assert.equal(h.calls.at(-1).join(' '), 'rev-parse HEAD');
+  });
+}
+
+test('concatenated patch >512 KiB is rejected without truncation', async (t) => {
+  const workspace = await fixture(t);
+  await addHelperFile(workspace, 'other.txt', 'before\n');
+  const h = harness(workspace, { selection: ['example.txt', 'other.txt'],
+    phase2: { summary: 'Texto.', files: [{ path: 'example.txt', content: 'after\n' }, { path: 'other.txt', content: 'after\n' }] },
+    generateDiff: async ({ path }) => ({ path, changed: true, patch: 'x'.repeat(256 * 1024 + 1) }),
+  });
+  assert.equal((await h.invoke()).data.code, 'DETERMINISTIC_MODEL_INVALID');
+  assert.ok(!h.calls.some((args) => args[0] === 'apply'));
+});
+
+for (const [path, executable] of [['script.sh', true], ['docs/Guia de usuario.md', false]]) {
+  test(`real handler-generated diff checks ${path} without changing content/index/mode`, async (t) => {
+    const workspace = await fixture(t);
+    if (path.includes('/')) await mkdir(`${workspace}/docs`);
+    await addHelperFile(workspace, path, 'before\n');
+    if (executable) {
+      await chmod(`${workspace}/${path}`, 0o755);
+      execFileSync('git', ['add', '--', path], { cwd: workspace, shell: false });
+      assert.ok(execFileSync('git', ['ls-files', '--stage', '--', path], { cwd: workspace, encoding: 'utf8' }).startsWith('100755 '));
+    }
+    const indexBefore = await readFile(`${workspace}/.git/index`);
+    const modeBefore = (await stat(`${workspace}/${path}`)).mode;
+    const h = harness(workspace, { realDiff: true, selection: [path],
+      phase2: { summary: 'Actualizar.', files: [{ path, content: 'after\n' }] } });
+    const result = await h.invoke();
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.data.proposal.files, [path]);
+    assert.ok(result.data.proposal.patch.startsWith(`diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n`));
+    assert.ok(!/\n(?:index |old mode |new mode )/.test(result.data.proposal.patch));
+    assert.deepEqual(h.calls.filter((args) => args[0] === 'apply'), [['apply', '--check', '--recount', '--index', '--whitespace=error', '-']]);
+    assert.equal(await readFile(`${workspace}/${path}`, 'utf8'), 'before\n');
+    assert.equal((await stat(`${workspace}/${path}`)).mode, modeBefore);
+    assert.deepEqual(await readFile(`${workspace}/.git/index`), indexBefore);
+  });
+}
 
 for (const [name, setup] of [
   ['per-file', async (workspace) => { await writeFile(`${workspace}/example.txt`, 'x'.repeat(16385)); return ['example.txt']; }],
@@ -705,7 +839,7 @@ test('proposal lock prevents concurrent phases and releases after completion', a
   const started = new Promise((resolve) => { entered = resolve; });
   const held = new Promise((resolve) => { release = resolve; });
   const h = harness(await fixture(t), { generateProposal: async () => {
-    entered(); await held; return structuredClone(proposal);
+    entered(); await held; return structuredClone(contentProposal);
   } });
   const first = h.invoke();
   await started;
@@ -743,8 +877,10 @@ test('normal phase 1 checkpoint occurs before reading selected files', async (t)
   assert.equal(between.filter((event) => event === 'status').length, 2);
 });
 
-test('native phases use the deadline wrappers and only mocked HTTP, without tools', async (t) => {
+test('native phases use deadline wrappers and only mocked HTTP, without tools', async (t) => {
   let requests = 0;
+  let selectedContent = 'before\n';
+  let generatedProposal = contentProposal;
   const signals = [];
   t.mock.method(globalThis, 'fetch', async (url, settings) => {
     requests++;
@@ -759,16 +895,23 @@ test('native phases use the deadline wrappers and only mocked HTTP, without tool
       assert.deepEqual(Object.keys(user).sort(), ['catalog', 'request']);
       assert.ok(!settings.body.includes('before\\n'));
     } else {
-      assert.deepEqual(user.files, [{ path: 'example.txt', content: 'before\n' }]);
+      assert.deepEqual(user.files, [{ path: 'example.txt', content: selectedContent }]);
     }
     return new Response(JSON.stringify({ model: 'qwen3:8b', done: true,
-      message: { role: 'assistant', content: JSON.stringify(requests === 1 ? { files: ['example.txt'] } : proposal) } }), {
+      message: { role: 'assistant', content: JSON.stringify(requests === 1 ? { files: ['example.txt'] } : generatedProposal) } }), {
       headers: { 'Content-Type': 'application/json' },
     });
   });
-  const r = await harness(await fixture(t), { nativePhases: true }).invoke();
-  assert.equal(r.status, 200);
-  assert.equal(requests, 2);
+  for (const content of ['before\n', 'before']) {
+    selectedContent = content;
+    requests = 0;
+    generatedProposal = contentProposal;
+    const workspace = await fixture(t);
+    await addHelperFile(workspace, 'example.txt', content);
+    const r = await harness(workspace, { nativePhases: true }).invoke();
+    assert.equal(r.status, 200);
+    assert.equal(requests, 2);
+  }
   assert.ok(signals.every((signal) => signal.aborted));
 });
 
@@ -864,7 +1007,9 @@ for (const resultHasNewline of [true, false]) {
       + (resultHasNewline ? '' : `\n${noNewlineMarker}`));
     assert.doesNotThrow(() => validatePatchStructure(value));
     let checks = 0;
-    const h = harness(workspace, { selection: ['README.md'], proposal: value, checkInput: (input) => {
+    const h = harness(workspace, { selection: ['README.md'], realDiff: true,
+      phase2: { summary: value.summary, files: [{ path: 'README.md',
+        content: 'LAB-IA funcionando correctamente.' + (resultHasNewline ? '\n' : '') }] }, checkInput: (input) => {
       checks++;
       assert.equal(input, value.patch);
     } });

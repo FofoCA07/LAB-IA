@@ -5,6 +5,7 @@ import { posix } from 'node:path';
 import { createHash } from 'node:crypto';
 import { selectProposalFiles } from './file-selection.js';
 import { generateDeterministicProposal } from './deterministic-proposal.js';
+import { generateDeterministicDiff } from './deterministic-diff.js';
 import { generateOllamaProposal } from './ollama-proposal.js';
 
 const patchLimit = 512 * 1024;
@@ -349,7 +350,7 @@ function mapProposalError(error) {
   let code;
   try { code = error?.code; } catch { /* Untrusted accessor. */ }
   if (typeof code !== 'string') code = 'FAILED';
-  if (['OLLAMA_TIMEOUT', 'FILE_OPERATION_TIMEOUT'].includes(code)) {
+  if (['OLLAMA_TIMEOUT', 'FILE_OPERATION_TIMEOUT', 'DIFF_TIMEOUT'].includes(code)) {
     return Object.assign(failure(504, 'TIMEOUT', 'La propuesta excedió el tiempo máximo.'),
       { timeoutSource: code === 'OLLAMA_TIMEOUT' ? 'client' : 'endpoint' });
   }
@@ -359,6 +360,8 @@ function mapProposalError(error) {
     SELECTED_CONTENT_TOO_LARGE: 'DETERMINISTIC_CONTEXT_TOO_LARGE',
     FILE_VALIDATION_FAILED: 'WORKSPACE_NOT_SAFE',
     FILE_SELECTION_INPUT_INVALID: 'FAILED', DETERMINISTIC_INPUT_INVALID: 'FAILED',
+    DIFF_INPUT_INVALID: 'FAILED', DIFF_PROCESS_FAILED: 'FAILED',
+    DIFF_OUTPUT_TOO_LARGE: 'FAILED', DIFF_INVALID_OUTPUT: 'FAILED',
   };
   code = Object.hasOwn(mapped, code) ? mapped[code]
     : Object.hasOwn(endpointMessages, code) ? code : 'FAILED';
@@ -400,7 +403,8 @@ export function proposalPhaseDeadline(globalDeadline, phase, now = Date.now()) {
 }
 
 export function createChangeProposalHandler({ getWorkspaceStatus, json,
-  git = runProposalGit, selectFiles = selectProposalFiles, generateProposal = generateDeterministicProposal }) {
+  git = runProposalGit, selectFiles = selectProposalFiles, generateProposal = generateDeterministicProposal,
+  generateDiff = generateDeterministicDiff }) {
   let proposalInProgress = false;
   return async function changeProposal(request, response) {
     response.setHeader('Cache-Control', 'no-store');
@@ -518,7 +522,9 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
       enterStage('after_read_checkpoint');
       await checkpoint();
       enterStage('proposal_generation');
-      const proposal = await runPhase(2, generateProposal, { request: description, files: contents });
+      // Do not let an injected generator mutate the original snapshot in memory.
+      const phase2 = await runPhase(2, generateProposal, { request: description,
+        files: contents.map(({ path, content }) => ({ path, content })) });
       enterStage('after_generation_checkpoint');
       await checkpoint();
       enterStage('snapshot_verification');
@@ -528,8 +534,48 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
       if (currentContents.some((file) => fingerprints.get(file.path) !== contentFingerprint(file))) {
         throw failure(409, 'WORKSPACE_CHANGED', 'El workspace activo cambió durante la propuesta.');
       }
-      contents = undefined;
       currentContents = undefined;
+      const plain = (value) => value && typeof value === 'object'
+        && Object.getPrototypeOf(value) === Object.prototype;
+      if (!plain(phase2) || Object.keys(phase2).length !== 2
+        || !['summary', 'files'].every((key) => Object.hasOwn(phase2, key))
+        || typeof phase2.summary !== 'string' || !phase2.summary.trim() || phase2.summary.length > 4000
+        || forbiddenControls.test(phase2.summary) || !Array.isArray(phase2.files)
+        || phase2.files.length < 1 || phase2.files.length > 20) {
+        throw mapProposalError({ code: 'DETERMINISTIC_MODEL_INVALID' });
+      }
+      const seen = new Set();
+      let proposedBytes = 0;
+      for (const file of phase2.files) {
+        if (!plain(file) || Object.keys(file).length !== 2
+          || !['path', 'content'].every((key) => Object.hasOwn(file, key))
+          || typeof file.path !== 'string' || !fingerprints.has(file.path) || seen.has(file.path)
+          || typeof file.content !== 'string') throw mapProposalError({ code: 'DETERMINISTIC_MODEL_INVALID' });
+        seen.add(file.path);
+        proposedBytes += Buffer.byteLength(file.content, 'utf8');
+        if (proposedBytes > 32 * 1024) throw mapProposalError({ code: 'DETERMINISTIC_CONTEXT_TOO_LARGE' });
+      }
+      enterStage('deterministic_diff');
+      const originals = new Map(contents.map(({ path, content }) => [path, content]));
+      const proposal = { summary: phase2.summary, files: [], patch: '' };
+      for (const { path, content } of [...phase2.files].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
+        let diff;
+        try {
+          diff = await beforeDeadline(() => generateDiff({ path, originalContent: originals.get(path),
+            proposedContent: content, deadline: workDeadline }, { validatePath: validProposalPath }), workDeadline);
+        } catch (cause) { throw safeEndpointErrors.has(cause) ? cause : mapProposalError(cause); }
+        if (!plain(diff) || diff.path !== path || typeof diff.changed !== 'boolean' || typeof diff.patch !== 'string'
+          || (!diff.changed && diff.patch !== '') || (diff.changed && !diff.patch)) {
+          throw mapProposalError({ code: 'DIFF_INVALID_OUTPUT' });
+        }
+        if (diff.changed) { proposal.files.push(path); proposal.patch += diff.patch; }
+        if (Buffer.byteLength(proposal.patch, 'utf8') > patchLimit) {
+          throw mapProposalError({ code: 'DETERMINISTIC_MODEL_INVALID' });
+        }
+      }
+      contents = undefined;
+      originals.clear();
+      if (!proposal.files.length) throw patchStructureFailure('no_changes');
       enterStage('patch_structure');
       if (!proposal || typeof proposal !== 'object' || Array.isArray(proposal)
         || Object.keys(proposal).length !== 3 || !['summary', 'files', 'patch'].every((key) => Object.hasOwn(proposal, key))
