@@ -3,6 +3,8 @@ import { constants } from 'node:fs';
 import { open, realpath } from 'node:fs/promises';
 import { posix } from 'node:path';
 import { createHash } from 'node:crypto';
+import { createProposalStore, createWorkspaceLocks } from './proposal-store.js';
+import { repositoryIdentity, trackedModes, fileFingerprints, sha256, same } from './proposal-safety.js';
 import { selectProposalFiles } from './file-selection.js';
 import { generateDeterministicProposal } from './deterministic-proposal.js';
 import { generateDeterministicDiff } from './deterministic-diff.js';
@@ -148,6 +150,7 @@ async function beforeDeadline(operation, deadline) {
 }
 
 export function runProposalGit(workspace, args, { input, deadline = Date.now() + 10_000 } = {}) {
+  if (args[0] === 'apply' && !args.includes('--check')) return Promise.reject(new Error('Read-only Git executor.'));
   return new Promise((resolveResult, reject) => {
     const timeout = Math.min(10_000, deadline - Date.now());
     if (timeout <= 0) { reject(Object.assign(failure(504, 'TIMEOUT', 'La propuesta excedió el tiempo máximo.'), { timeoutSource: 'endpoint' })); return; }
@@ -402,9 +405,18 @@ export function proposalPhaseDeadline(globalDeadline, phase, now = Date.now()) {
   return Math.min(cutoff, now + (phase === 1 ? 30_000 : 150_000));
 }
 
+async function registerAuditedProposal(registration, { workspace, baseHead, git, deadline, store }) {
+  if (!same(await repositoryIdentity(workspace, git, deadline), registration.repoIdentity)) throw new Error();
+  const finalSnapshot = await fileFingerprints(workspace, registration.paths, registration.modes, deadline);
+  if (!same(finalSnapshot.fingerprints, registration.originalFingerprints)
+    || !same(finalSnapshot.permissions, registration.permissions)) throw new Error();
+  if ((await git(workspace, ['rev-parse', 'HEAD'], { deadline })).trim() !== baseHead) throw new Error();
+  return store.register(registration);
+}
+
 export function createChangeProposalHandler({ getWorkspaceStatus, json,
   git = runProposalGit, selectFiles = selectProposalFiles, generateProposal = generateDeterministicProposal,
-  generateDiff = generateDeterministicDiff }) {
+  generateDiff = generateDeterministicDiff, store = createProposalStore(), locks = createWorkspaceLocks() }) {
   let proposalInProgress = false;
   return async function changeProposal(request, response) {
     response.setHeader('Cache-Control', 'no-store');
@@ -445,6 +457,8 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
     let baseHead;
     let cleanInitially = false;
     let result;
+    let release;
+    let registration;
     let error;
     try {
       const chunks = [];
@@ -467,6 +481,8 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
         throw failure(503, 'UNAVAILABLE', 'El contenedor o su workspace no están disponibles.');
       }
       workspace = status.workspace;
+      release = locks.acquire(workspace);
+      if (!release) throw failure(409, 'BUSY', 'El workspace está ocupado.');
       enterStage('repository_validation');
       try {
         await validateProposalRepository(workspace, git, workDeadline);
@@ -518,6 +534,9 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
       let contents;
       try { contents = await readSelectedTextFiles(workspace, selection.files, workDeadline, git); }
       catch (cause) { throw mapProposalError(cause); }
+      const repoIdentity = await repositoryIdentity(workspace, git, workDeadline);
+      const modes = await trackedModes(workspace, selection.files, git, workDeadline);
+      const originalSnapshot = await fileFingerprints(workspace, selection.files, modes, workDeadline);
       const fingerprints = new Map(contents.map((file) => [file.path, contentFingerprint(file)]));
       enterStage('after_read_checkpoint');
       await checkpoint();
@@ -573,6 +592,12 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
           throw mapProposalError({ code: 'DETERMINISTIC_MODEL_INVALID' });
         }
       }
+      const proposedFingerprints = Object.fromEntries(phase2.files.map(({ path, content }) => [path, sha256(Buffer.from(content, 'utf8'))]));
+      registration = { workspace, repoRoot: repoIdentity.repoRoot, repoIdentity, baseHead, paths: proposal.files, patch: proposal.patch,
+        modes: Object.fromEntries(proposal.files.map((path) => [path, modes[path]])),
+        permissions: Object.fromEntries(proposal.files.map((path) => [path, originalSnapshot.permissions[path]])),
+        originalFingerprints: Object.fromEntries(proposal.files.map((path) => [path, originalSnapshot.fingerprints[path]])),
+        proposedFingerprints: Object.fromEntries(proposal.files.map((path) => [path, proposedFingerprints[path]])) };
       contents = undefined;
       originals.clear();
       if (!proposal.files.length) throw patchStructureFailure('no_changes');
@@ -603,6 +628,7 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
         const patchCheckReason = await diagnosePatchCheck(workspace, proposal.patch, git, workDeadline, cause);
         throw Object.assign(proposalFailure('PATCH_CHECK_FAILED'), { patchCheckReason });
       }
+      registration.patch = proposal.patch;
       result = { success: true, workspace, engine: 'ollama-deterministic', baseHead, proposal };
     } catch (cause) {
       error = safeEndpointErrors.has(cause) ? cause : mapProposalError(cause);
@@ -635,6 +661,13 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
         if (!mountSafe) error = failure(500, 'WORKSPACE_NOT_SAFE', endpointMessages.WORKSPACE_NOT_SAFE);
       }
       timings[stage] = Math.max(0, Date.now() - stageStarted);
+      if (!error && registration) {
+        try {
+          const registered = await registerAuditedProposal(registration, { workspace, baseHead, git, deadline, store });
+          result.proposalId = registered.proposalId; result.expiresAt = registered.expiresAt;
+        } catch { error = failure(500, 'WORKSPACE_NOT_SAFE', endpointMessages.WORKSPACE_NOT_SAFE); }
+      }
+      release?.();
       proposalInProgress = false;
     }
     if (error) json(response, error.status ?? 502, { success: false, code: error.publicCode ?? 'FAILED',

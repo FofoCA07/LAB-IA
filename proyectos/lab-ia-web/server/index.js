@@ -5,6 +5,13 @@ import { mkdir, open, opendir, readdir, readFile, realpath, stat } from 'node:fs
 import { dirname, resolve, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createChangeProposalHandler } from './change-proposal.js';
+import { createProposalStore, createWorkspaceLocks } from './proposal-store.js';
+import { createApplyChangeProposalHandler } from './apply-change-proposal.js';
+
+const proposalStore = createProposalStore();
+const proposalLocks = createWorkspaceLocks();
+const proposalCleanup = setInterval(() => proposalStore.cleanup(), 30_000);
+proposalCleanup.unref();
 
 const serverDir = dirname(await realpath(fileURLToPath(import.meta.url)));
 const labRoot = resolve(serverDir, '../../..');
@@ -507,6 +514,10 @@ async function activateWorkspace(request, response) {
     json(response, 409, { success: false, error: 'Ya hay una activación de workspace en curso.' });
     return;
   }
+  const releaseProposalLock = proposalLocks.acquireExclusive();
+  if (!releaseProposalLock) {
+    json(response, 409, { success: false, error: 'El workspace está ocupado.' }); return;
+  }
   activationInProgress = true;
   try {
     let body;
@@ -561,6 +572,7 @@ async function activateWorkspace(request, response) {
     json(response, 500, { success: false, error: 'No se pudo activar el workspace.' });
   } finally {
     activationInProgress = false;
+    releaseProposalLock();
   }
 }
 
@@ -670,11 +682,17 @@ async function conversations(request, response, path) {
   }
 }
 
-const changeProposal = createChangeProposalHandler({ getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
+const changeProposal = createChangeProposalHandler({ store: proposalStore, locks: proposalLocks, getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
+
+const applyChangeProposal = createApplyChangeProposalHandler({ store: proposalStore, locks: proposalLocks,
+  getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
 
 const server = createServer(async (request, response) => {
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
+  if (path === '/api/opencode/apply-change-proposal') {
+    await applyChangeProposal(request, response); return;
+  }
   if (path === '/api/opencode/change-proposal') {
     await changeProposal(request, response);
     return;

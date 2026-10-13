@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { chmod, stat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { runInNewContext } from 'node:vm';
 import { createHash } from 'node:crypto';
@@ -19,8 +19,7 @@ const proposal = { summary: 'Actualizar el texto.', files: ['example.txt'], patc
 const contentProposal = { summary: proposal.summary, files: [{ path: 'example.txt', content: 'after\n' }] };
 const privateMarker = 'PRIVATE_REQUEST_CONTENT_RAW_HASH';
 async function fixture(t) {
-  const parent = resolve(import.meta.dirname, '../dist');
-  await mkdir(parent, { recursive: true });
+  const parent = tmpdir();
   const workspace = await mkdtemp(`${parent}/proposal-test-`);
   t.after(() => rm(workspace, { recursive: true, force: true }));
   // Fixtures only: no commit, no OpenCode call, no live LAB-IA server/SQLite.
@@ -525,7 +524,11 @@ test('two phases receive only their authorized data, catalog precedes selection 
   });
   const response = await h.invoke({ request: privateMarker });
   assert.equal(response.status, 200);
-  assert.deepEqual(response.data, { success: true, workspace, engine: 'ollama-deterministic', baseHead: head, proposal });
+  assert.match(response.data.proposalId, /^[a-f0-9-]{36}$/);
+  assert.ok(response.data.expiresAt > Date.now());
+  const { proposalId, expiresAt, ...visible } = response.data;
+  assert.ok(proposalId && expiresAt);
+  assert.deepEqual(visible, { success: true, workspace, engine: 'ollama-deterministic', baseHead: head, proposal });
   assert.equal(Object.hasOwn(response.data, 'agent'), false);
   assert.ok(h.events.indexOf('ls-files') < h.events.indexOf('selection'));
   assert.equal(h.calls.filter((args) => args[0] === 'status').length, 6);
@@ -608,7 +611,7 @@ test('diff gets original/new contents and a shared work deadline after snapshot 
     generationInput: (input) => { phaseDeadline = input.deadline; },
     readCheck: () => { trackedReads++; },
     generateDiff: async (input, dependencies) => {
-      assert.equal(trackedReads, 2, 'first read and fingerprint reread precede diff');
+      assert.equal(trackedReads, 3, 'first read, mode snapshot and fingerprint reread precede diff');
       assert.deepEqual(Object.keys(input).sort(), ['deadline', 'originalContent', 'path', 'proposedContent']);
       assert.equal(dependencies.validatePath, validProposalPath);
       received.push(input);
@@ -941,13 +944,13 @@ test('timeout during target_files_validation stays TIMEOUT and still audits with
   let reads = 0;
   const h = harness(await fixture(t), { readCheck: () => {
     reads++;
-    // Initial selected read, snapshot re-read, then final target validation.
-    if (reads === 3) throw Object.assign(new Error(privateMarker), {
+    // Selected read, mode snapshot, snapshot re-read, then target validation.
+    if (reads === 4) throw Object.assign(new Error(privateMarker), {
       code: 'FILE_OPERATION_TIMEOUT', path: privateMarker, stdout: privateMarker, stderr: privateMarker,
     });
   } });
   const response = await h.invoke({ request: privateMarker });
-  assert.equal(reads, 3);
+  assert.equal(reads, 4);
   assert.equal(response.status, 504);
   assert.equal(response.data.code, 'TIMEOUT');
   assert.equal(response.data.stage, 'target_files_validation');
