@@ -4,7 +4,7 @@ import { open, realpath } from 'node:fs/promises';
 import { posix } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createProposalStore, createWorkspaceLocks } from './proposal-store.js';
-import { repositoryIdentity, trackedModes, fileFingerprints, sha256, same } from './proposal-safety.js';
+import { repositoryIdentity, trackedModes, captureFileFingerprints, sha256, same } from './proposal-safety.js';
 import { selectProposalFiles } from './file-selection.js';
 import { generateDeterministicProposal } from './deterministic-proposal.js';
 import { generateDeterministicDiff } from './deterministic-diff.js';
@@ -407,9 +407,10 @@ export function proposalPhaseDeadline(globalDeadline, phase, now = Date.now()) {
 
 async function registerAuditedProposal(registration, { workspace, baseHead, git, deadline, store }) {
   if (!same(await repositoryIdentity(workspace, git, deadline), registration.repoIdentity)) throw new Error();
-  const finalSnapshot = await fileFingerprints(workspace, registration.paths, registration.modes, deadline);
+  const finalSnapshot = await captureFileFingerprints(workspace, registration.paths, registration.modes, deadline);
   if (!same(finalSnapshot.fingerprints, registration.originalFingerprints)
-    || !same(finalSnapshot.permissions, registration.permissions)) throw new Error();
+    || !same(finalSnapshot.permissions, registration.permissions)
+    || !same(finalSnapshot.sizes, registration.sizes)) throw new Error();
   if ((await git(workspace, ['rev-parse', 'HEAD'], { deadline })).trim() !== baseHead) throw new Error();
   return store.register(registration);
 }
@@ -536,7 +537,7 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
       catch (cause) { throw mapProposalError(cause); }
       const repoIdentity = await repositoryIdentity(workspace, git, workDeadline);
       const modes = await trackedModes(workspace, selection.files, git, workDeadline);
-      const originalSnapshot = await fileFingerprints(workspace, selection.files, modes, workDeadline);
+      const originalSnapshot = await captureFileFingerprints(workspace, selection.files, modes, workDeadline);
       const fingerprints = new Map(contents.map((file) => [file.path, contentFingerprint(file)]));
       enterStage('after_read_checkpoint');
       await checkpoint();
@@ -595,6 +596,8 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
       const proposedFingerprints = Object.fromEntries(phase2.files.map(({ path, content }) => [path, sha256(Buffer.from(content, 'utf8'))]));
       registration = { workspace, repoRoot: repoIdentity.repoRoot, repoIdentity, baseHead, paths: proposal.files, patch: proposal.patch,
         modes: Object.fromEntries(proposal.files.map((path) => [path, modes[path]])),
+        sizes: Object.fromEntries(proposal.files.map((path) => [path, originalSnapshot.sizes[path]])),
+        proposedSizes: Object.fromEntries(proposal.files.map((path) => [path, Buffer.byteLength(phase2.files.find((file) => file.path === path).content, 'utf8')])),
         permissions: Object.fromEntries(proposal.files.map((path) => [path, originalSnapshot.permissions[path]])),
         originalFingerprints: Object.fromEntries(proposal.files.map((path) => [path, originalSnapshot.fingerprints[path]])),
         proposedFingerprints: Object.fromEntries(proposal.files.map((path) => [path, proposedFingerprints[path]])) };

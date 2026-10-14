@@ -45,6 +45,11 @@ function validConversation(value) {
     && Number.isFinite(Date.parse(value.actualizada_en));
 }
 
+function validProposalId(value) {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+}
+
 function Viewer({ activeSection, onSelectSection }) {
   const [openCode, setOpenCode] = useState(null);
   const [openCodeLoading, setOpenCodeLoading] = useState(true);
@@ -58,6 +63,20 @@ function Viewer({ activeSection, onSelectSection }) {
   const [proposalError, setProposalError] = useState('');
   const [changeProposal, setChangeProposal] = useState(null);
   const proposalPending = useRef(false);
+  const applyPending = useRef(false);
+  const consumedProposalIds = useRef(new Set());
+  const [applyState, setApplyState] = useState('idle');
+  const [applyError, setApplyError] = useState('');
+  const [appliedFiles, setAppliedFiles] = useState([]);
+  const [proposalConsumed, setProposalConsumed] = useState(false);
+  const [proposalExpired, setProposalExpired] = useState(false);
+
+  useEffect(() => {
+    if (!changeProposal || !Number.isSafeInteger(changeProposal.expiresAt)) return;
+    const timer = window.setTimeout(() => setProposalExpired(true),
+      Math.min(Math.max(0, changeProposal.expiresAt - Date.now()), 2_147_483_647));
+    return () => window.clearTimeout(timer);
+  }, [changeProposal]);
   const canAnalyzeWorkspace = !openCodeLoading && !openCodeError && openCode?.available
     && openCode.running && openCode.cliAvailable && openCode.workspace !== null;
   const [workspaces, setWorkspaces] = useState([]);
@@ -248,7 +267,7 @@ function Viewer({ activeSection, onSelectSection }) {
   }, [activeSection, loadActiveWorkspace]);
 
   async function analyzeWorkspace() {
-    if (summaryPending.current || proposalPending.current || !canAnalyzeWorkspace) return;
+    if (summaryPending.current || proposalPending.current || applyPending.current || !canAnalyzeWorkspace) return;
     summaryPending.current = true;
     setSummaryLoading(true);
     setSummaryError('');
@@ -284,7 +303,7 @@ function Viewer({ activeSection, onSelectSection }) {
   }
 
   async function activateSelectedWorkspace() {
-    if (activationPending.current || workspacesLoading || workspacesError
+    if (applyPending.current || activationPending.current || workspacesLoading || workspacesError
       || !workspaces.some((workspace) => workspace.path === selectedWorkspace && workspace.exists)) return;
     const path = selectedWorkspace;
     activationPending.current = true;
@@ -322,12 +341,17 @@ function Viewer({ activeSection, onSelectSection }) {
   }
 
   async function generateChangeProposal() {
-    if (proposalPending.current || summaryPending.current || activationPending.current
+    if (applyPending.current || proposalPending.current || summaryPending.current || activationPending.current
       || requestInProgress.current || openingRequest.current || !canAnalyzeWorkspace || !changeRequest.trim()) return;
     proposalPending.current = true;
     setProposalLoading(true);
     setProposalError('');
     setChangeProposal(null);
+    setApplyState('idle');
+    setApplyError('');
+    setAppliedFiles([]);
+    setProposalConsumed(false);
+    setProposalExpired(false);
     try {
       const response = await fetch('/api/lab/api/opencode/change-proposal', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -426,7 +450,11 @@ function Viewer({ activeSection, onSelectSection }) {
         || new TextEncoder().encode(proposal.patch).length > 512 * 1024) {
         throw new Error('El servidor devolvió una propuesta no válida.');
       }
-      setChangeProposal(data);
+      const proposalId = validProposalId(data.proposalId) ? data.proposalId : null;
+      const expiresAt = Number.isSafeInteger(data.expiresAt) && data.expiresAt > 0 ? data.expiresAt : null;
+      setChangeProposal({ ...data, proposalId, expiresAt });
+      setProposalConsumed(consumedProposalIds.current.has(proposalId));
+      setProposalExpired(expiresAt === null || expiresAt <= Date.now());
     } catch (failure) {
       setProposalError(failure instanceof TypeError
         ? 'No se pudo consultar el servidor local para generar la propuesta.'
@@ -434,6 +462,58 @@ function Viewer({ activeSection, onSelectSection }) {
     } finally {
       proposalPending.current = false;
       setProposalLoading(false);
+    }
+  }
+
+  async function applyChangeProposal() {
+    const proposal = changeProposal;
+    if (!proposal || !validProposalId(proposal.proposalId) || applyPending.current
+      || consumedProposalIds.current.has(proposal.proposalId) || proposalPending.current
+      || summaryPending.current || activationPending.current) return;
+    if (!Number.isSafeInteger(proposal.expiresAt) || proposal.expiresAt <= Date.now()) {
+      setProposalExpired(true);
+      return;
+    }
+    if (!window.confirm(`Se modificarán ${proposal.proposal.files.length} archivo(s) del proyecto. Esta acción no hará commit. ¿Deseas continuar?`)) return;
+    // The proposal can expire while its confirmation dialog remains open.
+    if (proposal.expiresAt <= Date.now()) {
+      setProposalExpired(true);
+      return;
+    }
+    applyPending.current = true;
+    consumedProposalIds.current.add(proposal.proposalId);
+    setProposalConsumed(true);
+    setApplyState('applying');
+    setApplyError('');
+    const uncertainMessage = 'No se pudo confirmar la aplicación. Pueden existir cambios parciales; se requiere revisión manual. Genera una nueva propuesta después de revisar.';
+    try {
+      const response = await fetch('/api/lab/api/opencode/apply-change-proposal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposalId: proposal.proposalId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setApplyError(typeof data?.error === 'string' && data.error.trim() ? data.error : uncertainMessage);
+        setApplyState('failed');
+        return;
+      }
+      if (data?.applied !== true || !Array.isArray(data.files)
+        || data.files.length !== proposal.proposal.files.length
+        || new Set(data.files).size !== data.files.length
+        || !data.files.every((file) => proposal.proposal.files.includes(file))) {
+        setApplyError(uncertainMessage);
+        setApplyState('failed');
+        return;
+      }
+      setAppliedFiles(data.files);
+      setApplyState('applied');
+    } catch {
+      // Never display exception text or retry a request whose outcome is unknown.
+      setApplyError(uncertainMessage);
+      setApplyState('failed');
+    } finally {
+      applyPending.current = false;
     }
   }
 
@@ -627,7 +707,7 @@ function Viewer({ activeSection, onSelectSection }) {
               {activationError && <p className="chat-error" role="alert">{activationError}</p>}
               {!workspacesLoading && !workspacesError && workspaces.some((workspace) => workspace.path === selectedWorkspace && workspace.exists) && (
                 <button className="agent-select workspace-activate" type="button"
-                  disabled={workspaceActivating} onClick={() => void activateSelectedWorkspace()}>
+                  disabled={workspaceActivating || applyState === 'applying'} onClick={() => void activateSelectedWorkspace()}>
                   Activar workspace
                 </button>
               )}
@@ -720,7 +800,7 @@ function Viewer({ activeSection, onSelectSection }) {
                 <h2 id="workspace-summary-title">Análisis del workspace</h2>
                 <p>Agente: <strong>Reviewer</strong> · Solo lectura</p>
                 <button className="agent-select" type="button"
-                  disabled={!canAnalyzeWorkspace || summaryLoading || proposalLoading}
+                  disabled={!canAnalyzeWorkspace || summaryLoading || proposalLoading || applyState === 'applying'}
                   onClick={() => void analyzeWorkspace()}>Analizar workspace</button>
                 {summaryLoading && <p role="status">Analizando workspace...</p>}
                 {summaryError && <p className="chat-error" role="alert">{summaryError}</p>}
@@ -742,17 +822,17 @@ function Viewer({ activeSection, onSelectSection }) {
               </section>
               <section className="opencode-status section-card change-proposal" aria-labelledby="change-proposal-title">
                 <h2 id="change-proposal-title">Propuesta de cambio</h2>
-                <p>Motor: <strong>Ollama · generación determinista</strong> · Solo lectura</p>
+                <p>Motor: <strong>Ollama · generación determinista</strong></p>
                 <label className="composer-label" htmlFor="change-request">Describe el cambio que quieres realizar</label>
                 <textarea id="change-request" rows={4} maxLength={4000}
                   placeholder="Describe el cambio que quieres realizar"
-                  value={changeRequest} disabled={proposalLoading}
+                  value={changeRequest} disabled={proposalLoading || applyState === 'applying'}
                   onChange={(event) => setChangeRequest(event.target.value)} />
                 <button className="agent-select" type="button"
                   disabled={!canAnalyzeWorkspace || !changeRequest.trim() || proposalLoading || summaryLoading
-                    || workspaceActivating || isLoading || openingId !== null}
+                    || workspaceActivating || isLoading || openingId !== null || applyState === 'applying'}
                   onClick={() => void generateChangeProposal()}>Generar propuesta</button>
-                <p className="proposal-notice">Esta propuesta todavía no ha modificado archivos.</p>
+                {applyState === 'idle' && <p className="proposal-notice">Esta propuesta todavía no ha modificado archivos.</p>}
                 {proposalLoading && <p role="status">Generando propuesta...</p>}
                 {proposalError && <p className="chat-error" role="alert">{proposalError}</p>}
                 {changeProposal && (
@@ -768,7 +848,29 @@ function Viewer({ activeSection, onSelectSection }) {
                     </dl>
                     <h3>Diff propuesto</h3>
                     <pre className="proposal-patch" tabIndex={0} aria-label="Diff propuesto"><code>{changeProposal.proposal.patch}</code></pre>
-                    <p className="proposal-notice">Esta propuesta todavía no ha modificado archivos.</p>
+                    <div className="proposal-apply-actions" aria-busy={applyState === 'applying'}>
+                      {validProposalId(changeProposal.proposalId) && (
+                        <button className="agent-select proposal-apply" type="button"
+                          disabled={proposalConsumed || proposalExpired || applyState !== 'idle'
+                            || proposalLoading || summaryLoading || workspaceActivating}
+                          onClick={() => void applyChangeProposal()}>
+                          {applyState === 'applying' ? 'Aplicando...' : 'Aplicar cambio'}
+                        </button>
+                      )}
+                      {applyState === 'applying' && <p className="proposal-notice" role="status">Aplicando...</p>}
+                      {applyState === 'applied' && (
+                        <div className="proposal-apply-success" role="status">
+                          <p>Cambio aplicado correctamente.</p>
+                          <p>Archivos aplicados:</p>
+                          <ul>{appliedFiles.map((file) => <li key={file}><code>{file}</code></li>)}</ul>
+                        </div>
+                      )}
+                      {proposalExpired && applyState === 'idle' && !proposalConsumed && (
+                        <p className="proposal-apply-expired" role="status">La propuesta expiró. Genera una nueva propuesta.</p>
+                      )}
+                      {applyError && <p className="chat-error" role="alert">{applyError}</p>}
+                    </div>
+                    {applyState === 'idle' && <p className="proposal-notice">Esta propuesta todavía no ha modificado archivos.</p>}
                   </div>
                 )}
               </section>

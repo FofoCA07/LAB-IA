@@ -478,3 +478,22 @@
   background: #5558d9;
   color: var(--text-primary);
 }
+
+.proposal-apply-actions {
+  margin-top: 16px;
+}
+
+.proposal-apply-actions .proposal-apply {
+  margin-top: 0;
+}
+
+.proposal-apply-success {
+  margin-top: 12px;
+  color: var(--text-accent);
+  overflow-wrap: anywhere;
+}
+
+.proposal-apply-expired {
+  margin-top: 12px;
+  color: var(--text-secondary);
+}

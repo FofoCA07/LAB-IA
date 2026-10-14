@@ -50,8 +50,8 @@ export async function trackedModes(workspace, paths, git, deadline) {
   ensure(Object.keys(modes).length === paths.length);
   return modes;
 }
-export async function fileFingerprints(workspace, paths, modes, deadline) {
-  const fingerprints = {}; const permissions = {};
+export async function captureFileFingerprints(workspace, paths, modes, deadline) {
+  const fingerprints = {}; const permissions = {}; const sizes = {};
   for (const path of paths) {
     const file = await openTrackedRegularFile(workspace, path, modes[path], deadline);
     try {
@@ -59,11 +59,44 @@ export async function fileFingerprints(workspace, paths, modes, deadline) {
       ensure(metadata.size <= 64 * 1024);
       const bytes = await readBounded(file, 64 * 1024);
       fingerprints[path] = sha256(bytes); permissions[path] = metadata.mode & 0o7777;
-      ensure(Boolean(metadata.mode & 0o111) === (modes[path] === '100755'));
+      sizes[path] = bytes.length;
     } finally { await file.close(); }
   }
-  return { fingerprints, permissions };
+  return { fingerprints, permissions, sizes };
 }
+
+// Apply retains its strict compatibility check independently of capture.
+export async function fileFingerprints(workspace, paths, modes, deadline) {
+  const snapshot = await captureFileFingerprints(workspace, paths, modes, deadline);
+  for (const path of paths) {
+    ensure(Boolean(snapshot.permissions[path] & 0o111) === (modes[path] === '100755'));
+  }
+  return snapshot;
+}
+// Apply reads Git's mode policy explicitly; missing config keeps Git's strict default.
+export async function validateApplyFileFingerprints(workspace, paths, modes, git, deadline) {
+  let honorFileMode = true;
+  try {
+    const value = (await git(workspace, ['config', '--type=bool', '--get', 'core.filemode'], { deadline })).trim();
+    ensure(value === 'true' || value === 'false');
+    honorFileMode = value === 'true';
+  } catch (error) {
+    if (error.code !== 1 || error.killed) throw error;
+  }
+  const snapshot = honorFileMode
+    ? await fileFingerprints(workspace, paths, modes, deadline)
+    : await captureFileFingerprints(workspace, paths, modes, deadline);
+  return { ...snapshot, honorFileMode };
+}
+
+export function unchangedApplyPermissions(current, originals, { afterApply = false } = {}) {
+  return Object.keys(current.permissions).every((path) => {
+    // With filemode=false, Git may recreate rwx permissions. Special bits must stay unchanged.
+    const mask = afterApply && !current.honorFileMode ? 0o7000 : 0o7777;
+    return (current.permissions[path] & mask) === (originals[path] & mask);
+  });
+}
+
 export async function validateConfiguration(workspace, paths, git, deadline) {
   const run = (args) => git(workspace, args, { deadline });
   // Force split detection even if config was disabled after creating the index.

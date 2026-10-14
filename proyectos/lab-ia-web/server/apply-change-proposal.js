@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, chmod, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, stat, writeFile, rm } from 'node:fs/promises';
 import { runProposalGit, validProposalPath, validatePatchStructure } from './change-proposal.js';
 import { validProposalId } from './proposal-store.js';
-import { repositoryIdentity, indexSnapshot, trackedModes, fileFingerprints,
+import { repositoryIdentity, indexSnapshot, trackedModes, validateApplyFileFingerprints, unchangedApplyPermissions,
   validateConfiguration, noUntracked, same } from './proposal-safety.js';
 
 const capabilities = new WeakSet();
@@ -89,6 +89,7 @@ export function createApplyChangeProposalHandler({ store, locks, getWorkspaceSta
     const record = store.claim(body.proposalId);
     if (!record) { release(); reply(409, 'PROPOSAL_UNAVAILABLE', 'La propuesta no está disponible.'); return; }
     let directory; let temporaryIndex; let originalIndex; let identity;
+    let honorFileMode;
     let succeeded = false; let auditPassed; let applyAttempted = false; let cleanupPassed = true;
     const deadline = Date.now() + 60_000;
     const run = (args, options = {}) => git(record.workspace, args, { deadline, ...options });
@@ -123,8 +124,11 @@ export function createApplyChangeProposalHandler({ store, locks, getWorkspaceSta
         async () => {
           const modes = await trackedModes(record.workspace, record.paths, git, auditDeadline);
           ensure(same(modes, record.modes));
-          const current = await fileFingerprints(record.workspace, record.paths, modes, auditDeadline);
-          ensure(same(current.fingerprints, record.proposedFingerprints) && same(current.permissions, record.permissions));
+          const current = await validateApplyFileFingerprints(record.workspace, record.paths, modes, git, auditDeadline);
+          ensure(current.honorFileMode === honorFileMode);
+          ensure(same(current.fingerprints, record.proposedFingerprints)
+            && unchangedApplyPermissions(current, record.permissions, { afterApply: true }));
+          if (record.proposedSizes) ensure(same(current.sizes, record.proposedSizes));
         },
       ];
       const results = await Promise.allSettled(tasks.map((task) => task()));
@@ -143,11 +147,14 @@ export function createApplyChangeProposalHandler({ store, locks, getWorkspaceSta
       await noUntracked(record.workspace, git, deadline);
       const modes = await trackedModes(record.workspace, record.paths, git, deadline);
       ensure(same(modes, record.modes));
-      const current = await fileFingerprints(record.workspace, record.paths, modes, deadline);
-      ensure(same(current.fingerprints, record.originalFingerprints) && same(current.permissions, record.permissions));
+      const current = await validateApplyFileFingerprints(record.workspace, record.paths, modes, git, deadline);
+      honorFileMode = current.honorFileMode;
+      ensure(same(current.fingerprints, record.originalFingerprints) && unchangedApplyPermissions(current, record.permissions));
+      if (record.sizes) ensure(same(current.sizes, record.sizes));
       const check = ['apply', '--check', '--recount', '--index', '--whitespace=error', '-'];
       await run(check, { input: record.patch });
-      directory = await mkdtemp('/dev/shm/lab-proposal-'); await chmod(directory, 0o700);
+      directory = await mkdtemp('/dev/shm/lab-proposal-');
+      ensure(((await stat(directory)).mode & 0o7777) === 0o700);
       temporaryIndex = Object.freeze({ path: `${directory}/index`, workspace: record.workspace, patch: record.patch });
       await writeFile(temporaryIndex.path, originalIndex, { flag: 'wx', mode: 0o600 });
       capabilities.add(temporaryIndex);

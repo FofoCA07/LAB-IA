@@ -12,7 +12,7 @@ import { runProposalGit, createChangeProposalHandler } from './change-proposal.j
 import { generateDeterministicDiff } from './deterministic-diff.js';
 
 const old = 'FUNCIONAAA X2'; const proposed = 'LAB-IA funcionando correctamente.';
-const forbidden = new Set(['commit', 'push', 'reset', 'restore', 'checkout', 'clean']);
+const forbidden = new Set(['commit', 'push', 'reset', 'restore', 'checkout', 'clean', 'chmod']);
 // Fixtures create a commit object using plumbing; no git commit invocation, no live server or model.
 function fixtureGit(workspace, args, input) {
   return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd: workspace, shell: false,
@@ -302,4 +302,78 @@ test('frontend remains untouched and endpoint wires the same store and locks', a
   assert.match(source, /createChangeProposalHandler\(\{ store: proposalStore, locks: proposalLocks/);
   assert.match(source, /createApplyChangeProposalHandler\(\{ store: proposalStore, locks: proposalLocks/);
   assert.match(source, /proposalLocks\.acquireExclusive\(\)/);
+});
+
+
+test('generation permits tracked 100644 with filesystem 0777 and core.filemode=false', async (t) => {
+  const h = await fixture(t);
+  fixtureGit(h.workspace, ['config', 'core.filemode', 'false']);
+  await chmod(join(h.workspace, 'README.md'), 0o777);
+  const handler = createChangeProposalHandler({ store: h.store, locks: h.locks,
+    getWorkspaceStatus: async () => ({ available: true, running: true, workspace: h.workspace }),
+    selectFiles: async () => ({ files: ['README.md'] }),
+    generateProposal: async () => ({ summary: 'Fixture change', files: [{ path: 'README.md', content: proposed }] }),
+    json: (response, status, data) => Object.assign(response, { status, data }) });
+  const request = Readable.from([Buffer.from(JSON.stringify({ request: 'Fixture' }))]);
+  Object.assign(request, { method: 'POST', url: '/api/opencode/change-proposal', headers: { 'content-type': 'application/json', host: 'localhost' } });
+  const response = { setHeader() {} }; await handler(request, response);
+  assert.equal(response.status, 200);
+  const saved = h.store.get(response.data.proposalId);
+  assert.equal(saved.modes['README.md'], '100644');
+  assert.equal(saved.permissions['README.md'], 0o777);
+  assert.equal(saved.sizes['README.md'], Buffer.byteLength(old));
+  assert.equal(saved.proposedSizes['README.md'], Buffer.byteLength(proposed));
+  assert.equal(saved.originalFingerprints['README.md'], sha256(old));
+  assert.equal(saved.proposedFingerprints['README.md'], sha256(proposed));
+  assert.equal((await stat(join(h.workspace, 'README.md'))).mode & 0o777, 0o777);
+  assert.deepEqual(await readFile(join(h.workspace, '.git/index')), h.indexBefore);
+  const applied = await h.invoke({ proposalId: saved.proposalId });
+  assert.equal(applied.status, 200);
+  assert.equal(applied.data.applied, true);
+  assert.equal(await readFile(join(h.workspace, 'README.md'), 'utf8'), proposed);
+  assert.ok(fixtureGit(h.workspace, ['ls-files', '--stage', '--', 'README.md']).startsWith('100644 '));
+  assert.deepEqual(await readFile(join(h.workspace, '.git/index')), h.indexBefore);
+  assert.equal(fixtureGit(h.workspace, ['diff', '--cached']), '');
+  assert.equal(fixtureGit(h.workspace, ['rev-parse', 'HEAD']).trim(), h.record.baseHead);
+  assert.equal(fixtureGit(h.workspace, ['status', '--short']), ' M README.md\n');
+});
+
+test('apply rejects a real tracked mode change before writing', async (t) => {
+  const h = await fixture(t);
+  fixtureGit(h.workspace, ['config', 'core.filemode', 'false']);
+  fixtureGit(h.workspace, ['update-index', '--chmod=+x', 'README.md']);
+  await assertRejected(h);
+  assert.equal(await readFile(join(h.workspace, 'README.md'), 'utf8'), old);
+});
+
+test('core.filemode=true still rejects executable mismatch before writing', async (t) => {
+  const h = await fixture(t);
+  fixtureGit(h.workspace, ['config', 'core.filemode', 'true']);
+  await chmod(join(h.workspace, 'README.md'), 0o777);
+  await assertRejected(h);
+  assert.equal(await readFile(join(h.workspace, 'README.md'), 'utf8'), old);
+});
+
+
+test('apply never invokes chmod, including temporary directory preparation', async () => {
+  const source = await readFile(new URL('./apply-change-proposal.js', import.meta.url), 'utf8');
+  assert.ok(!/\bchmod\b/.test(source));
+});
+
+test('100755 remains authoritative when core.filemode=false', async (t) => {
+  const h = await fixture(t, { executable: true });
+  fixtureGit(h.workspace, ['config', 'core.filemode', 'false']);
+  await assertSuccess(h);
+  assert.ok(fixtureGit(h.workspace, ['ls-files', '--stage', '--', 'README.md']).startsWith('100755 '));
+});
+
+test('core.filemode=true rejects a late executable mismatch in final audit', async (t) => {
+  const h = await fixture(t); let applied = false;
+  h.intercept = async (p, args) => {
+    if (args[0] === 'apply' && !args.includes('--check')) applied = true;
+    else if (applied && args[0] === 'ls-files' && args.includes('--stage')) await chmod(join(p, 'README.md'), 0o777);
+  };
+  assert.equal((await h.invoke()).status, 500);
+  assert.equal(h.store.get(h.record.proposalId).state, 'failed');
+  assert.deepEqual(await readFile(join(h.workspace, '.git/index')), h.indexBefore);
 });
