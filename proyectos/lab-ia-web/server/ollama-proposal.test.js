@@ -35,7 +35,7 @@ test('fixed local configuration and minimal JSON request, without tools', async 
     assert.equal(request.redirect, 'error');
     assert.equal(request.headers['Content-Type'], 'application/json');
     assert.ok(request.signal instanceof AbortSignal);
-    assert.deepEqual(JSON.parse(request.body), { model: 'qwen3:8b', messages, stream: false, format: 'json' });
+    assert.deepEqual(JSON.parse(request.body), { model: 'qwen3:8b', messages, stream: false, format: 'json', keep_alive: '1h' });
     return reply(chat({ message: { role: 'assistant', content: '  generated text\n', thinking: privateText } }));
   });
   assert.equal(result, '  generated text\n');

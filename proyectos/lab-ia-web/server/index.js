@@ -7,6 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { createChangeProposalHandler } from './change-proposal.js';
 import { createProposalStore, createWorkspaceLocks } from './proposal-store.js';
 import { createApplyChangeProposalHandler } from './apply-change-proposal.js';
+import { createOllamaWarmup, waitForOllamaWarmup } from './ollama-warmup.js';
+
+const ollamaWarmup = createOllamaWarmup({
+  onState: (state) => console.log(`LAB-IA: Ollama warmup ${state}`),
+});
 
 const proposalStore = createProposalStore();
 const proposalLocks = createWorkspaceLocks();
@@ -682,7 +687,7 @@ async function conversations(request, response, path) {
   }
 }
 
-const changeProposal = createChangeProposalHandler({ store: proposalStore, locks: proposalLocks, getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
+const changeProposal = createChangeProposalHandler({ store: proposalStore, locks: proposalLocks, waitForWarmup: (deadline) => waitForOllamaWarmup(ollamaWarmup, deadline), getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
 
 const applyChangeProposal = createApplyChangeProposalHandler({ store: proposalStore, locks: proposalLocks,
   getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
@@ -781,4 +786,5 @@ const server = createServer(async (request, response) => {
 
 server.listen(3001, '127.0.0.1', () => {
   console.log('LAB-IA: servidor local en http://127.0.0.1:3001');
+  void ollamaWarmup.start();
 });

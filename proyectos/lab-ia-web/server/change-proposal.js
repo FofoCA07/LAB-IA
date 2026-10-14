@@ -417,7 +417,8 @@ async function registerAuditedProposal(registration, { workspace, baseHead, git,
 
 export function createChangeProposalHandler({ getWorkspaceStatus, json,
   git = runProposalGit, selectFiles = selectProposalFiles, generateProposal = generateDeterministicProposal,
-  generateDiff = generateDeterministicDiff, store = createProposalStore(), locks = createWorkspaceLocks() }) {
+  generateDiff = generateDeterministicDiff, store = createProposalStore(), locks = createWorkspaceLocks(),
+  waitForWarmup = async () => {} }) {
   let proposalInProgress = false;
   return async function changeProposal(request, response) {
     response.setHeader('Cache-Control', 'no-store');
@@ -441,7 +442,7 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
     if (proposalInProgress) {
       json(response, 409, { success: false, code: 'BUSY', error: 'Ya hay una propuesta en curso.' }); return;
     }
-    proposalInProgress = true;
+    let ownsProposal = false;
     const deadline = Date.now() + 180_000;
     const workDeadline = deadline - 20_000;
     const timings = {};
@@ -476,6 +477,12 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
         body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       } catch (cause) { throw safeEndpointErrors.has(cause) ? cause : failure(400, 'INVALID_REQUEST', 'JSON no válido.'); }
       const description = validateChangeRequest(body);
+      enterStage('model_warmup');
+      try { await beforeDeadline(() => waitForWarmup(workDeadline), workDeadline); }
+      catch (cause) { throw safeEndpointErrors.has(cause) ? cause : mapProposalError(cause); }
+      if (proposalInProgress) throw failure(409, 'BUSY', 'Ya hay una propuesta en curso.');
+      proposalInProgress = true;
+      ownsProposal = true;
       enterStage('initial_workspace_status');
       const status = await beforeDeadline(getWorkspaceStatus, workDeadline);
       if (!status.available || !status.running || !status.workspace) {
@@ -671,7 +678,7 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
         } catch { error = failure(500, 'WORKSPACE_NOT_SAFE', endpointMessages.WORKSPACE_NOT_SAFE); }
       }
       release?.();
-      proposalInProgress = false;
+      if (ownsProposal) proposalInProgress = false;
     }
     if (error) json(response, error.status ?? 502, { success: false, code: error.publicCode ?? 'FAILED',
       error: error.publicCode === 'TIMEOUT' ? 'La propuesta excedió el tiempo máximo.'

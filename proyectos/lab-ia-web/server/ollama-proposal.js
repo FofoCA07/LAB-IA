@@ -48,7 +48,7 @@ export async function generateOllamaProposal({ messages, deadline, timeoutMs, fo
       timeoutMs === undefined ? Infinity : timeoutMs);
     if (budget > 2_147_483_647) throw badResponse();
     body = JSON.stringify({ model: ollamaProposalConfig.model,
-      messages: messages.map(({ role, content }) => ({ role, content })), stream: false, format });
+      messages: messages.map(({ role, content }) => ({ role, content })), stream: false, format, keep_alive: '1h' });
   } catch {
     throw badResponse();
   }

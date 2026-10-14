@@ -41,6 +41,7 @@ function harness(workspace, options = {}) {
   let headCalls = 0;
   let workspaceCalls = 0;
   const handler = createChangeProposalHandler({
+    waitForWarmup: options.waitForWarmup,
     getWorkspaceStatus: async () => {
       workspaceCalls++;
       if (options.statusError) throw options.statusError;
@@ -1031,3 +1032,46 @@ for (const resultHasNewline of [true, false]) {
     assert.deepEqual(await readFile(`${workspace}/.git/index`), originalIndex);
   });
 }
+
+
+test('warmup delay is outside the phase-one 30 second budget but within global deadline', async (t) => {
+  const workspace = await fixture(t); const realNow = Date.now;
+  let offset = 0; Date.now = () => realNow() + offset;
+  t.after(() => { Date.now = realNow; });
+  const h = harness(workspace, {
+    waitForWarmup: async (deadline) => {
+      assert.ok(deadline > Date.now() + 150_000);
+      offset = 60_000;
+    },
+    selectionInput: (input) => {
+      const remaining = input.deadline - Date.now();
+      assert.ok(remaining > 29_000 && remaining <= 30_000);
+    },
+  });
+  assert.equal((await h.invoke()).status, 200);
+});
+
+test('warmup exhausting global work deadline stops before selection and reports safe timeout', async (t) => {
+  const workspace = await fixture(t); const realNow = Date.now;
+  let offset = 0; Date.now = () => realNow() + offset;
+  t.after(() => { Date.now = realNow; });
+  const h = harness(workspace, { waitForWarmup: async () => {
+    offset = 180_001;
+    throw { code: 'OLLAMA_TIMEOUT', error: 'PRIVATE_WARMUP_DETAIL' };
+  } });
+  const result = await h.invoke();
+  assert.equal(result.status, 504); assert.equal(result.data.code, 'TIMEOUT');
+  assert.equal(result.data.stage, 'model_warmup'); assert.equal(h.selectCalls, 0);
+  assert.ok(!JSON.stringify(result.data).includes('PRIVATE'));
+});
+
+test('two endpoint requests can wait for warmup before proposal concurrency claim', async (t) => {
+  const workspace = await fixture(t); let arrivals = 0; let release; let both;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const entered = new Promise((resolve) => { both = resolve; });
+  const h = harness(workspace, { waitForWarmup: () => { if (++arrivals === 2) both(); return gate; } });
+  const one = h.invoke(); const two = h.invoke(); await entered; release();
+  const results = await Promise.all([one, two]);
+  assert.deepEqual(results.map((result) => result.status).sort(), [200, 409]);
+  assert.equal(h.selectCalls, 1);
+});
