@@ -10,6 +10,14 @@
   min-width: 0;
 }
 
+.app-viewer {
+  display: contents;
+}
+
+.app-viewer[hidden] {
+  display: none;
+}
+
 @media (max-width: 680px) {
   .main-content {
     flex-direction: column;

@@ -1,6 +1,6 @@
 import './Sidebar.css';
 
-const options = ['Chat', 'Agentes', 'Proyectos', 'Historial', 'Configuración'];
+const options = ['Chat', 'Agentes', 'Proyectos', 'Acciones', 'Historial', 'Configuración'];
 
 function Sidebar({ activeSection, onSelectSection }) {
   return (
