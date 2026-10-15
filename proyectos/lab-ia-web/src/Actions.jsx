@@ -1,31 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './Actions.css';
-
-// Datos DEMO locales. No representan solicitudes ni permisos reales.
-const DEMO_ACTIONS = [
-  {
-    id: 'demo-read', agent: 'Senior Developer', type: 'read', status: 'pending',
-    title: 'Leer archivos del proyecto', project: 'Facturación',
-    resources: ['ProductoController.java', 'ProductoDao.java'],
-    reason: 'Revisar dónde debe agregarse la validación.', allowLabel: 'Permitir una vez',
-  },
-  {
-    id: 'demo-docker', agent: 'Docker Expert', type: 'docker', status: 'pending',
-    title: 'Reiniciar contenedor', project: 'LAB-IA',
-    resources: ['Contenedor de ejemplo'],
-    reason: 'Simular la autorización de un reinicio en esta interfaz.', allowLabel: 'Permitir',
-  },
-  {
-    id: 'demo-sql', agent: 'SQL Expert', type: 'sql', status: 'running',
-    title: 'Ejecutando consulta de validación', project: 'Facturación',
-    resources: ['Consulta de ejemplo'], reason: 'Mostrar cómo se presenta una acción en ejecución.',
-  },
-  {
-    id: 'demo-review', agent: 'Reviewer', type: 'read', status: 'completed',
-    title: 'Revisión completada', project: 'LAB-IA',
-    resources: [], reason: 'Mostrar el resultado visual de una revisión finalizada.',
-  },
-];
 
 const TYPES = {
   read: 'Lectura', write: 'Escritura', command: 'Comando', test: 'Prueba',
@@ -34,6 +8,7 @@ const TYPES = {
 
 const STATUSES = {
   pending: 'Pendiente', running: 'Ejecutando', completed: 'Completada', denied: 'Rechazada',
+  expired: 'Expirada', failed: 'Fallida',
 };
 
 const TABS = [
@@ -44,21 +19,20 @@ const TABS = [
 
 function belongsToTab(action, tab) {
   return tab === 'completed'
-    ? action.status === 'completed' || action.status === 'denied'
+    ? ['completed', 'denied', 'expired', 'failed'].includes(action.status)
     : action.status === tab;
 }
 
-// Modelo visual reutilizable: type y status solo determinan su presentación.
-function ActionCard({ action, onStatusChange }) {
+function ActionCard({ action, onDecision, busy, processing }) {
   return (
-    <article className={`action-card action-card--${action.status}`}>
+    <article className={`action-card action-card--${action.status}`} aria-busy={processing}>
       <div className="action-card-top">
         <span className="action-agent">{action.agent}</span>
         <span className="action-status">{STATUSES[action.status]}</span>
       </div>
       <h2>{action.title}</h2>
       <div className="action-tags">
-        <span className="action-type" title={`Tipo: ${action.type}`}>{TYPES[action.type] || action.type}</span>
+        <span className="action-type" title={`Tipo: ${action.type}`}>{Object.hasOwn(TYPES, action.type) ? TYPES[action.type] : action.type}</span>
         {action.project && <span>Proyecto: {action.project}</span>}
       </div>
       <div className="action-reason">
@@ -68,7 +42,7 @@ function ActionCard({ action, onStatusChange }) {
       {action.resources?.length > 0 && (
         <div className="action-resources">
           <span className="action-field-label">Recursos afectados</span>
-          <ul>{action.resources.map((resource) => <li key={resource}>{resource}</li>)}</ul>
+          <ul>{action.resources.map((resource, index) => <li key={index}>{resource}</li>)}</ul>
         </div>
       )}
       {action.dateTime && (
@@ -76,37 +50,107 @@ function ActionCard({ action, onStatusChange }) {
           {new Date(action.dateTime).toLocaleString('es')}
         </time>
       )}
-      {action.status === 'pending' && (
+      {action.status === 'pending' && action.type === 'read' && (
         <div className="action-card-buttons">
           <button type="button" className="action-button action-button--primary"
-            onClick={() => onStatusChange(action.id, 'running')}>
-            {action.allowLabel || 'Permitir'}
+            disabled={busy} onClick={() => onDecision(action, 'approve_once')}>
+            {processing ? 'Procesando…' : 'Permitir una vez'}
           </button>
           <button type="button" className="action-button action-button--deny"
-            onClick={() => onStatusChange(action.id, 'denied')}>Rechazar</button>
-        </div>
-      )}
-      {action.status === 'running' && (
-        <div className="action-card-buttons">
-          <button type="button" className="action-button"
-            onClick={() => onStatusChange(action.id, 'completed')}>Finalizar demo</button>
+            disabled={busy} onClick={() => onDecision(action, 'deny')}>Rechazar</button>
         </div>
       )}
     </article>
   );
 }
 
+// Copy only the fields used by the view; never retain extra response fields.
+function parseActions(data) {
+  if (!data || !Array.isArray(data.actions)) throw new Error('Invalid actions');
+  const ids = new Set();
+  return data.actions.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)
+      || typeof item.actionId !== 'string'
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(item.actionId)
+      || ids.has(item.actionId)
+      || typeof item.state !== 'string' || !Object.hasOwn(STATUSES, item.state)
+      || !['agentName', 'type', 'projectName', 'reason', 'createdAt'].every(
+        (key) => typeof item[key] === 'string' && item[key].trim().length > 0)
+      || !Number.isFinite(Date.parse(item.createdAt))
+      || !Array.isArray(item.resources)
+      || !item.resources.every((resource) => typeof resource === 'string' && resource.trim().length > 0)) {
+      throw new Error('Invalid action');
+    }
+    ids.add(item.actionId);
+    return {
+      id: item.actionId, agent: item.agentName, type: item.type, status: item.state,
+      title: Object.hasOwn(TYPES, item.type) ? TYPES[item.type] : item.type, project: item.projectName, reason: item.reason,
+      resources: [...item.resources], dateTime: item.createdAt,
+    };
+  });
+}
+
 export default function Actions() {
-  const [actions, setActions] = useState(DEMO_ACTIONS);
+  const [actions, setActions] = useState([]);
   const [activeTab, setActiveTab] = useState('pending');
-  const [announcement, setAnnouncement] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [processingId, setProcessingId] = useState(null);
+  const [error, setError] = useState('');
+  const busyRef = useRef(false);
+  const requestVersion = useRef(0);
   const currentTab = TABS.find((tab) => tab.id === activeTab);
   const visibleActions = actions.filter((action) => belongsToTab(action, activeTab));
+  const busy = loading || processingId !== null;
 
-  function changeStatus(id, status) {
-    setActions((current) => current.map((action) => action.id === id ? { ...action, status } : action));
-    const action = actions.find((item) => item.id === id);
-    setAnnouncement(`${action.agent}: ${STATUSES[status]}. Cambio simulado localmente.`);
+  async function loadActions() {
+    const version = ++requestVersion.current;
+    setLoading(true);
+    try {
+      const response = await fetch('/api/actions', { cache: 'no-store' });
+      if (!response.ok) throw new Error('Request failed');
+      const nextActions = parseActions(await response.json());
+      if (version === requestVersion.current) setActions(nextActions);
+    } catch {
+      if (version === requestVersion.current) {
+        setActions([]);
+        setError('No se pudieron cargar las acciones. Intenta actualizar.');
+      }
+    } finally {
+      if (version === requestVersion.current) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => { if (active) void loadActions(); });
+    return () => { active = false; requestVersion.current += 1; };
+  }, []);
+
+  async function decide(action, decision) {
+    if (busyRef.current || loading || action.status !== 'pending' || action.type !== 'read') return;
+    busyRef.current = true;
+    if (decision === 'approve_once' && !window.confirm(
+      `El agente podrá leer ${action.resources.length} archivo(s) una sola vez. ¿Deseas permitirlo?`,
+    )) {
+      busyRef.current = false;
+      return;
+    }
+    setProcessingId(action.id);
+    setError('');
+    try {
+      const response = await fetch('/api/actions/decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionId: action.id, decision }),
+      });
+      if (!response.ok) throw new Error('Decision failed');
+    } catch {
+      setError('No se pudo completar la decisión. Revisa el estado actualizado de la acción.');
+    } finally {
+      await loadActions();
+      setProcessingId(null);
+      busyRef.current = false;
+    }
   }
 
   return (
@@ -117,14 +161,11 @@ export default function Actions() {
           <h1 id="actions-title">Acciones</h1>
           <p>Revisa y controla las acciones que los agentes necesitan realizar.</p>
         </header>
-        <div className="actions-demo-notice">
-          <div><span className="actions-demo-badge">DEMO / LOCAL</span>
-            <p>Datos de ejemplo. Los botones solo cambian el estado visual; no conceden permisos ni ejecutan acciones reales.</p>
-          </div>
-          <button type="button" className="action-button" onClick={() => {
-            setActions(DEMO_ACTIONS);
-            setAnnouncement('Demo restablecida.');
-          }}>Restablecer demo</button>
+        <div className="actions-toolbar">
+          <button type="button" className="action-button" disabled={busy} onClick={() => {
+            setError('');
+            void loadActions();
+          }}>Actualizar</button>
         </div>
         <div className="actions-counters" aria-label="Resumen de acciones">
           {TABS.map((tab) => (
@@ -141,13 +182,15 @@ export default function Actions() {
               onClick={() => setActiveTab(tab.id)}>{tab.label}</button>
           ))}
         </nav>
-        <p className="actions-announcement" role="status">{announcement}</p>
-        <section className="actions-list" aria-label={`Acciones: ${currentTab.label}`}>
+        <p className="actions-feedback" role="status">
+          {processingId ? 'Procesando decisión…' : loading ? 'Cargando acciones…' : ''}
+        </p>
+        {error && <p className="actions-error" role="alert">{error}</p>}
+        <section aria-busy={busy} className="actions-list" aria-label={`Acciones: ${currentTab.label}`}>
           {visibleActions.length > 0
-            ? visibleActions.map((action) => <ActionCard key={action.id} action={action} onStatusChange={changeStatus} />)
-            : <div className="actions-empty"><span aria-hidden="true">◇</span><p>{currentTab.empty}</p></div>}
+            ? visibleActions.map((action) => <ActionCard key={action.id} action={action} onDecision={decide} busy={busy} processing={processingId === action.id} />)
+            : !loading && !error && <div className="actions-empty"><span aria-hidden="true">◇</span><p>{currentTab.empty}</p></div>}
         </section>
-        <p className="actions-footer">Sesión de demostración · Los cambios se reinician al salir del módulo.</p>
       </div>
     </main>
   );
