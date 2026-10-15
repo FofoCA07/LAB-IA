@@ -106,7 +106,7 @@ export default function Actions() {
     const version = ++requestVersion.current;
     setLoading(true);
     try {
-      const response = await fetch('/api/actions', { cache: 'no-store' });
+      const response = await fetch('/api/lab/api/actions', { cache: 'no-store' });
       if (!response.ok) throw new Error('Request failed');
       const nextActions = parseActions(await response.json());
       if (version === requestVersion.current) setActions(nextActions);
@@ -138,7 +138,7 @@ export default function Actions() {
     setProcessingId(action.id);
     setError('');
     try {
-      const response = await fetch('/api/actions/decision', {
+      const response = await fetch('/api/lab/api/actions/decision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actionId: action.id, decision }),
