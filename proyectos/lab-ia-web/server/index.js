@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { createChangeProposalHandler } from './change-proposal.js';
 import { createProposalStore, createWorkspaceLocks } from './proposal-store.js';
 import { createApplyChangeProposalHandler } from './apply-change-proposal.js';
+import { createActionStore } from './action-store.js';
+import { createActionHandlers } from './actions.js';
 import { createOllamaWarmup, waitForOllamaWarmup } from './ollama-warmup.js';
 
 const ollamaWarmup = createOllamaWarmup({
@@ -15,6 +17,10 @@ const ollamaWarmup = createOllamaWarmup({
 
 const proposalStore = createProposalStore();
 const proposalLocks = createWorkspaceLocks();
+const actionStore = createActionStore({ locks: proposalLocks,
+  getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }) });
+const actionCleanup = setInterval(() => actionStore.cleanup(), 30_000);
+actionCleanup.unref();
 const proposalCleanup = setInterval(() => proposalStore.cleanup(), 30_000);
 proposalCleanup.unref();
 
@@ -692,9 +698,17 @@ const changeProposal = createChangeProposalHandler({ store: proposalStore, locks
 const applyChangeProposal = createApplyChangeProposalHandler({ store: proposalStore, locks: proposalLocks,
   getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
 
+const actions = createActionHandlers({ store: actionStore, json });
+
 const server = createServer(async (request, response) => {
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
+  if (path === '/api/actions') {
+    actions.list(request, response); return;
+  }
+  if (path === '/api/actions/decision') {
+    await actions.decision(request, response); return;
+  }
   if (path === '/api/opencode/apply-change-proposal') {
     await applyChangeProposal(request, response); return;
   }
