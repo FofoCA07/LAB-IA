@@ -1,3 +1,6 @@
+import { createPublicMessageHandler } from './conversation-messages.js';
+import { createChatHandler } from './chat.js';
+import { loadAgentInstructions } from './agent-instructions.js';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { constants } from 'node:fs';
@@ -664,28 +667,7 @@ async function conversations(request, response, path) {
       return;
     }
 
-    if (!['user', 'assistant'].includes(body.rol)
-      || typeof body.contenido !== 'string' || !body.contenido.trim()) {
-      json(response, 400, { error: 'Datos de mensaje no válidos.' });
-      return;
-    }
-    const timestamp = new Date().toISOString();
-    let message;
-    database.exec('BEGIN');
-    try {
-      message = database.prepare(`
-        INSERT INTO mensajes (conversacion_id, rol, contenido, creado_en)
-        VALUES (?, ?, ?, ?)
-        RETURNING id, conversacion_id, rol, contenido, creado_en
-      `).get(id, body.rol, body.contenido, timestamp);
-      database.prepare('UPDATE conversaciones SET actualizada_en = ? WHERE id = ?')
-        .run(timestamp, id);
-      database.exec('COMMIT');
-    } catch (error) {
-      database.exec('ROLLBACK');
-      throw error;
-    }
-    json(response, 201, message);
+    addUserMessage(body, response, id);
   } catch {
     if (!response.headersSent) {
       json(response, 500, { error: 'No se pudo procesar la conversación.' });
@@ -698,11 +680,18 @@ const changeProposal = createChangeProposalHandler({ store: proposalStore, locks
 const applyChangeProposal = createApplyChangeProposalHandler({ store: proposalStore, locks: proposalLocks,
   getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
 
+const chat = createChatHandler({ database, json, loadAgent: (id) => loadAgentInstructions(agentsDir, id) });
+const addUserMessage = createPublicMessageHandler({ database, chat, json });
+
 const actions = createActionHandlers({ store: actionStore, json });
 
 const server = createServer(async (request, response) => {
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
+  const respondMatch = /^\/api\/conversations\/([^/]+)\/respond$/.exec(path);
+  if (respondMatch) {
+    await chat.respond(request, response, respondMatch[1]); return;
+  }
   if (path === '/api/actions') {
     actions.list(request, response); return;
   }
@@ -773,14 +762,8 @@ const server = createServer(async (request, response) => {
     }
 
     const filename = `${id}.md`;
-    let file;
     try {
-      file = await open(resolve(agentsDir, filename), constants.O_RDONLY | constants.O_NOFOLLOW);
-      if (!(await file.stat()).isFile()) {
-        json(response, 404, { error: 'Agente no encontrado.' });
-        return;
-      }
-      const content = await file.readFile('utf8');
+      const content = await loadAgentInstructions(agentsDir, id);
       json(response, 200, { id, filename, content });
     } catch (error) {
       if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(error.code)) {
@@ -788,8 +771,6 @@ const server = createServer(async (request, response) => {
       } else {
         throw error;
       }
-    } finally {
-      await file?.close();
     }
   } catch {
     if (!response.headersSent) {

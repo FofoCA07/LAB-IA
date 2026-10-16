@@ -610,39 +610,29 @@ function Viewer({ activeSection, onSelectSection }) {
         setConversationId(activeConversationId);
       }
       await postConversation(`/${activeConversationId}/messages`, {
-        rol: 'user', contenido: content,
+        content,
       }, 'No se pudo guardar tu mensaje. No se ha enviado a Ollama.');
       userSaved = true;
       setMessages(nextMessages);
       setDraft('');
 
-      const response = await fetch('/api/ollama/api/chat', {
+      const response = await fetch(`/api/lab/api/conversations/${activeConversationId}/respond`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'qwen3:8b',
-          messages: [{ role: 'system', content: loadedAgent.content }, ...nextMessages],
-          stream: false,
-        }),
+        body: JSON.stringify({}),
       });
-      if (!response.ok) {
-        throw new Error(`Ollama devolvió un error HTTP ${response.status}.`);
-      }
-      const data = await response.json();
-      if (typeof data.message?.content !== 'string' || !data.message.content.trim()) {
-        throw new Error('Ollama no devolvió una respuesta válida.');
-      }
-      try {
-        await postConversation(`/${activeConversationId}/messages`, {
-          rol: 'assistant', contenido: data.message.content,
-        }, 'La respuesta de Qwen está visible, pero no pudo guardarse. No se reintentará automáticamente.');
-      } catch (saveError) {
-        setError(saveError.message);
+      if (!response.ok) throw new Error('No se pudo generar o guardar la respuesta.');
+      const data = await response.json().catch(() => {
+        throw new Error('El servidor no devolvió una respuesta válida.');
+      });
+      if (data?.message?.role !== 'assistant'
+        || typeof data.message.content !== 'string' || !data.message.content.trim()) {
+        throw new Error('El servidor no devolvió una respuesta válida.');
       }
       setMessages([...nextMessages, { role: 'assistant', content: data.message.content }]);
     } catch (requestError) {
       setError(userSaved ? `No se pudo obtener una respuesta. ${requestError instanceof TypeError
-        ? 'Comprueba que Ollama esté disponible y que Vite esté ejecutándose con el proxy.'
+        ? 'Comprueba que el servidor local esté disponible.'
         : requestError.message} Puedes volver a enviar un mensaje.` : requestError.message);
     } finally {
       requestInProgress.current = false;
