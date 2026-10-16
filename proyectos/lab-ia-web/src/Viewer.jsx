@@ -625,7 +625,8 @@ function Viewer({ activeSection, onSelectSection }) {
       const data = await response.json().catch(() => {
         throw new Error('El servidor no devolvió una respuesta válida.');
       });
-      if (data?.message?.role !== 'assistant'
+      if (data?.state !== 'completed' || typeof data.turnId !== 'string'
+        || data.message?.role !== 'assistant'
         || typeof data.message.content !== 'string' || !data.message.content.trim()) {
         throw new Error('El servidor no devolvió una respuesta válida.');
       }

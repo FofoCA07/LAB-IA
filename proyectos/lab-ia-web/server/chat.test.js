@@ -6,12 +6,13 @@ import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { createTurnStore, isTurnId } from './turn-store.js';
 import { createChatHandler } from './chat.js';
 import { createPublicMessageHandler } from './conversation-messages.js';
 import { loadAgentInstructions } from './agent-instructions.js';
 
 const privateText = 'PRIVATE_INSTRUCTIONS_SQL_PATH_PROMPT';
-async function fixture(t, generate = async () => 'Respuesta normal') {
+async function fixture(t, generate = async () => 'Respuesta normal', turns = createTurnStore()) {
   const directory = await mkdtemp(join(tmpdir(), 'lab-chat-'));
   const database = new DatabaseSync(':memory:');
   database.exec(`CREATE TABLE conversaciones (id INTEGER PRIMARY KEY, agente_id TEXT, modelo TEXT, workspace TEXT, actualizada_en TEXT);
@@ -26,7 +27,7 @@ async function fixture(t, generate = async () => 'Respuesta normal') {
   await writeFile(join(directory, 'reviewer.md'), 'REVIEWER_PRIVATE');
   t.after(async () => { database.close(); await rm(directory, { recursive: true, force: true }); });
   const loaded = [];
-  const handler = createChatHandler({ database, generate,
+  const handler = createChatHandler({ database, generate, turns,
     loadAgent: async id => { loaded.push(id); return loadAgentInstructions(directory, id); },
     json(response, status, body) { response.status = status; response.body = body; },
   });
@@ -47,7 +48,12 @@ async function fixture(t, generate = async () => 'Respuesta normal') {
     addUserMessage(body, response, id);
     return response;
   }
-  return { database, directory, handler, loaded, request, history, publicMessage };
+  function getTurn(turnId, id = '1', options = {}) {
+    const response = { headers: {}, setHeader(key, value) { this.headers[key] = value; } };
+    handler.getTurn({ method: 'GET', url: `/api/conversations/${id}/turns/${turnId}`, ...options }, response, id, turnId);
+    return response;
+  }
+  return { database, directory, handler, loaded, request, history, publicMessage, turns, getTurn };
 }
 
 test('backend loads correct agent instructions and only persisted conversation history, and persists assistant', async t => {
@@ -62,7 +68,8 @@ test('backend loads correct agent instructions and only persisted conversation h
     { role: 'user', content: 'Pregunta actual' },
   ] });
   assert.deepEqual(f.loaded, ['senior-developer']);
-  assert.deepEqual(response.body, { message: { role: 'assistant', content: 'Respuesta normal' } });
+  assert.ok(isTurnId(response.body.turnId));
+  assert.deepEqual(response.body, { turnId: response.body.turnId, state: 'completed', message: { role: 'assistant', content: 'Respuesta normal' } });
   assert.equal(f.history(1).at(-1).contenido, 'Respuesta normal');
   assert.equal(f.history(1).at(-1).rol, 'assistant');
   assert.equal(f.database.prepare('SELECT actualizada_en FROM conversaciones WHERE id=1').get().actualizada_en === 'before', false);
@@ -73,7 +80,7 @@ test('backend loads correct agent instructions and only persisted conversation h
 test('browser operational fields are all rejected without loading an agent or generating', async t => {
   let calls = 0;
   const f = await fixture(t, async () => { calls++; return 'wrong'; });
-  for (const key of ['agentId', 'system', 'messages', 'model', 'workspace', 'paths', 'content', 'tools']) {
+  for (const key of ['turnId', 'state', 'actionId', 'agentId', 'system', 'messages', 'model', 'workspace', 'paths', 'content', 'tools']) {
     assert.equal((await f.request('1', { [key]: privateText })).status, 400);
   }
   for (const body of [[], null, 'null', '{bad', ' '.repeat(1025)]) {
@@ -99,11 +106,14 @@ test('model failure leaks no details, saves no assistant and releases claim for 
   const f = await fixture(t, async () => { if (fail) throw Error(privateText); return 'Retry reply'; });
   const response = await f.request();
   assert.equal(response.status, 502);
-  assert.deepEqual(Object.keys(response.body), ['error']);
+  assert.deepEqual(Object.keys(response.body), ['turnId', 'state', 'error']);
+  assert.equal(response.body.state, 'failed');
   assert.equal(JSON.stringify(response.body).includes(privateText), false);
   assert.equal(f.history(1).length, 3);
   assert.equal(f.handler.isGenerating(1), false);
   fail = false;
+  assert.equal((await f.request()).status, 409);
+  f.publicMessage({ content: 'Nuevo intento' });
   assert.equal((await f.request()).status, 200);
 });
 
@@ -172,6 +182,7 @@ test('assistant persistence failure rolls back and releases conversation claim',
   assert.equal(f.history(1).length, 3);
   assert.equal(f.handler.isGenerating(1), false);
   f.database.exec('DROP TRIGGER fail_assistant');
+  f.publicMessage({ content: 'Nuevo intento' });
   assert.equal((await f.request()).status, 200);
 });
 
@@ -247,4 +258,97 @@ test('public route uses restricted handler and Viewer sends content-only message
   assert.doesNotMatch(route, /INSERT INTO mensajes/);
   const viewer = await readFile(new URL('../src/Viewer.jsx', import.meta.url), 'utf8');
   assert.match(viewer, /postConversation\(`\/\$\{activeConversationId\}\/messages`, \{\s*content,\s*\}/);
+});
+
+
+test('turn GET shows processing then completed without exposing private metadata; assistant inserted once', async t => {
+  let finish; let calls = 0;
+  const f = await fixture(t, () => { calls++; return new Promise(resolve => { finish = resolve; }); });
+  const pending = f.request();
+  while (!finish) await new Promise(resolve => setImmediate(resolve));
+  const turn = f.turns.findActive(1);
+  assert.ok(isTurnId(turn.turnId));
+  assert.equal(turn.userMessageId, 3); assert.equal(turn.agentId, 'senior-developer');
+  assert.equal(turn.actionId, null);
+  assert.deepEqual(f.getTurn(turn.turnId).body, { turnId: turn.turnId, state: 'processing' });
+  assert.equal((await f.request()).status, 409);
+  finish('Respuesta pública');
+  const response = await pending;
+  assert.equal(response.status, 200);
+  assert.deepEqual(f.getTurn(turn.turnId).body, response.body);
+  assert.deepEqual(Object.keys(response.body).sort(), ['message', 'state', 'turnId']);
+  assert.doesNotMatch(JSON.stringify(response.body), /PRIVATE|untrusted|agentId|actionId|userMessageId/);
+  assert.equal(f.turns.get(turn.turnId).state, 'completed');
+  assert.equal(f.turns.get(turn.turnId).actionId, null);
+  assert.equal((await f.request()).status, 409);
+  // Even if assistant disappears, the retained originating user turn cannot generate twice.
+  f.database.prepare('DELETE FROM mensajes WHERE id = ?').run(f.history(1).at(-1).id);
+  assert.equal((await f.request()).status, 409);
+  assert.equal(calls, 1);
+});
+
+test('GET validates UUID, conversation ownership, missing turn, method and raw query', async t => {
+  const f = await fixture(t);
+  const response = await f.request(); const id = response.body.turnId;
+  assert.equal(f.getTurn(id, '2').status, 404);
+  assert.equal(f.getTurn(id, '999').status, 404);
+  assert.equal(f.getTurn('00000000-0000-4000-8000-000000000000').status, 404);
+  assert.equal(f.getTurn('bad').status, 400);
+  assert.equal(f.getTurn(id, '01').status, 400);
+  assert.equal(f.getTurn(id, '1', { method: 'POST' }).status, 405);
+  assert.equal(f.getTurn(id, '1', { url: '?state=completed' }).status, 400);
+});
+
+test('failed turn is queryable, safe, immutable and never saves an assistant', async t => {
+  let calls = 0;
+  const f = await fixture(t, async () => { calls++; throw new Error('PRIVATE http://internal/path SQL stack'); });
+  const response = await f.request();
+  assert.equal(response.status, 502);
+  assert.equal(response.body.state, 'failed');
+  assert.deepEqual(f.getTurn(response.body.turnId).body, response.body);
+  assert.deepEqual(Object.keys(response.body.error).sort(), ['code', 'message']);
+  assert.doesNotMatch(JSON.stringify(response.body), /PRIVATE|http:|SQL|stack|instructions/);
+  assert.equal(f.history(1).length, 3);
+  assert.equal(f.turns.get(response.body.turnId).actionId, null);
+  assert.equal(f.handler.isGenerating(1), false);
+  assert.equal((await f.request()).status, 409);
+  assert.equal(calls, 1);
+});
+
+test('future active states block respond and public messages without activating Chat actions', async t => {
+  const f = await fixture(t);
+  const turn = f.turns.create({ conversationId: 1, agentId: 'senior-developer', userMessageId: 3 });
+  f.turns.transition(turn.turnId, 'awaiting_permission');
+  assert.equal((await f.request()).status, 409);
+  assert.equal(f.publicMessage({ content: 'Blocked' }).status, 409);
+  f.turns.transition(turn.turnId, 'continuing');
+  assert.equal((await f.request()).status, 409);
+  assert.deepEqual(f.loaded, []);
+});
+
+
+test('expired pending generation cannot save assistant or revive the turn', async t => {
+  let time = 0; let finish;
+  const turns = createTurnStore({ now: () => time, ttlMs: 100 });
+  const f = await fixture(t, () => new Promise(resolve => { finish = resolve; }), turns);
+  const pending = f.request();
+  while (!finish) await new Promise(resolve => setImmediate(resolve));
+  const turn = turns.findActive(1);
+  time = 100;
+  assert.equal(f.getTurn(turn.turnId).body.state, 'expired');
+  finish('Too late');
+  assert.equal((await pending).status, 502);
+  assert.equal(f.history(1).length, 3);
+  assert.equal(f.handler.isGenerating(1), false);
+  assert.equal((await f.request()).status, 409);
+});
+
+test('turn capacity fails safely before agent loading or model invocation', async t => {
+  const turns = createTurnStore({ maxTurns: 1 });
+  turns.create({ conversationId: 2, agentId: 'reviewer', userMessageId: 4 });
+  const f = await fixture(t, () => assert.fail('must not generate'), turns);
+  assert.equal((await f.request()).status, 503);
+  assert.deepEqual(f.loaded, []);
+  assert.equal(f.history(1).length, 3);
+  assert.equal(f.handler.isGenerating(1), false);
 });

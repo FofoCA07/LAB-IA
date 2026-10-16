@@ -1,3 +1,4 @@
+import { createTurnStore } from './turn-store.js';
 import { createPublicMessageHandler } from './conversation-messages.js';
 import { createChatHandler } from './chat.js';
 import { loadAgentInstructions } from './agent-instructions.js';
@@ -680,7 +681,10 @@ const changeProposal = createChangeProposalHandler({ store: proposalStore, locks
 const applyChangeProposal = createApplyChangeProposalHandler({ store: proposalStore, locks: proposalLocks,
   getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
 
-const chat = createChatHandler({ database, json, loadAgent: (id) => loadAgentInstructions(agentsDir, id) });
+const turns = createTurnStore();
+const turnCleanup = setInterval(() => turns.cleanup(), 30_000);
+turnCleanup.unref();
+const chat = createChatHandler({ database, json, turns, loadAgent: (id) => loadAgentInstructions(agentsDir, id) });
 const addUserMessage = createPublicMessageHandler({ database, chat, json });
 
 const actions = createActionHandlers({ store: actionStore, json });
@@ -688,6 +692,10 @@ const actions = createActionHandlers({ store: actionStore, json });
 const server = createServer(async (request, response) => {
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
+  const turnMatch = /^\/api\/conversations\/([^/]+)\/turns\/([^/]+)$/.exec(path);
+  if (turnMatch) {
+    chat.getTurn(request, response, turnMatch[1], turnMatch[2]); return;
+  }
   const respondMatch = /^\/api\/conversations\/([^/]+)\/respond$/.exec(path);
   if (respondMatch) {
     await chat.respond(request, response, respondMatch[1]); return;
