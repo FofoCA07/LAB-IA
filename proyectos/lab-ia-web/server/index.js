@@ -1,4 +1,7 @@
 import { createTurnStore } from './turn-store.js';
+import { createSecurityStore } from './security-store.js';
+import { createAuthHandler } from './auth.js';
+import { attachPairingTerminal } from './pairing-terminal.js';
 import { createPublicMessageHandler } from './conversation-messages.js';
 import { createChatHandler } from './chat.js';
 import { loadAgentInstructions } from './agent-instructions.js';
@@ -689,7 +692,13 @@ const addUserMessage = createPublicMessageHandler({ database, chat, json });
 
 const actions = createActionHandlers({ store: actionStore, json });
 
+const securityStore = createSecurityStore();
+const auth = createAuthHandler({ store: securityStore, json });
+const securityCleanup = setInterval(() => securityStore.cleanup(), 30_000);
+securityCleanup.unref();
+
 const server = createServer(async (request, response) => {
+  if (await auth(request, response)) return;
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
   const turnMatch = /^\/api\/conversations\/([^/]+)\/turns\/([^/]+)$/.exec(path);
@@ -787,7 +796,10 @@ const server = createServer(async (request, response) => {
   }
 });
 
+let pairingTerminal;
+server.once('close', () => pairingTerminal?.close());
 server.listen(3001, '127.0.0.1', () => {
+  pairingTerminal = attachPairingTerminal({ securityStore, input: process.stdin, output: process.stdout });
   console.log('LAB-IA: servidor local en http://127.0.0.1:3001');
   void ollamaWarmup.start();
 });
