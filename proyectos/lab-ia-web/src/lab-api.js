@@ -18,7 +18,9 @@ export function createLabApi(csrfToken, onSessionExpired) {
       '/api/lab/api/workspaces/active', '/api/lab/api/opencode/status'].includes(path))
       || (method === 'POST' && ['/api/lab/api/workspaces/activate',
         '/api/lab/api/opencode/workspace-summary'].includes(path));
-    if (!isChat && !isActions && !isWorkspace) {
+    const isProposal = method === 'POST' && ['/api/lab/api/opencode/change-proposal',
+      '/api/lab/api/opencode/apply-change-proposal'].includes(path);
+    if (!isChat && !isActions && !isWorkspace && !isProposal) {
       throw new Error('Solicitud privada no válida.');
     }
     let response;

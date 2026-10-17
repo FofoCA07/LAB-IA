@@ -3,6 +3,7 @@ import { createSecurityStore } from './security-store.js';
 import { createAuthHandler } from './auth.js';
 import { createPrivateChatRoutes } from './chat-routes.js';
 import { createPrivateWorkspaceRoutes } from './workspace-routes.js';
+import { createPrivateProposalHandlers } from './proposal-security.js';
 import { attachPairingTerminal } from './pairing-terminal.js';
 import { createPublicMessageHandler } from './conversation-messages.js';
 import { createChatHandler } from './chat.js';
@@ -360,6 +361,7 @@ const addUserMessage = createPublicMessageHandler({ database, chat, json });
 const securityStore = createSecurityStore();
 const actions = createActionHandlers({ store: actionStore, securityStore, json });
 const auth = createAuthHandler({ store: securityStore, json });
+const privateProposals = createPrivateProposalHandlers({ securityStore, json, changeProposal, applyChangeProposal });
 const securityCleanup = setInterval(() => securityStore.cleanup(), 30_000);
 securityCleanup.unref();
 
@@ -393,10 +395,10 @@ const server = createServer(async (request, response) => {
     await actions.decision(request, response); return;
   }
   if (path === '/api/opencode/apply-change-proposal') {
-    await applyChangeProposal(request, response); return;
+    await privateProposals.applyChangeProposal(request, response); return;
   }
   if (path === '/api/opencode/change-proposal') {
-    await changeProposal(request, response);
+    await privateProposals.changeProposal(request, response);
     return;
   }
   json(response, 404, { error: 'Endpoint no encontrado.' });

@@ -9,6 +9,7 @@ import { selectProposalFiles } from './file-selection.js';
 import { generateDeterministicProposal } from './deterministic-proposal.js';
 import { generateDeterministicDiff } from './deterministic-diff.js';
 import { generateOllamaProposal } from './ollama-proposal.js';
+import { readBoundedJson, AuthRequestError } from './security-http.js';
 
 const patchLimit = 512 * 1024;
 const forbiddenControls = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/;
@@ -420,7 +421,7 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
   generateDiff = generateDeterministicDiff, store = createProposalStore(), locks = createWorkspaceLocks(),
   waitForWarmup = async () => {} }) {
   let proposalInProgress = false;
-  return async function changeProposal(request, response) {
+  return async function changeProposal(request, response, parsedBody) {
     response.setHeader('Cache-Control', 'no-store');
     if (request.method !== 'POST') {
       response.setHeader('Allow', 'POST');
@@ -463,19 +464,16 @@ export function createChangeProposalHandler({ getWorkspaceStatus, json,
     let registration;
     let error;
     try {
-      const chunks = [];
-      let size = 0;
       let body;
       try {
-        await beforeDeadline(async () => {
-          for await (const chunk of request) {
-            size += chunk.length;
-            if (size > 32 * 1024) throw failure(413, 'BODY_TOO_LARGE', 'Solicitud demasiado grande.');
-            chunks.push(chunk);
-          }
-        }, Math.min(workDeadline, Date.now() + 10_000));
-        body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      } catch (cause) { throw safeEndpointErrors.has(cause) ? cause : failure(400, 'INVALID_REQUEST', 'JSON no válido.'); }
+        body = parsedBody === undefined
+          ? await readBoundedJson(request, { maxBytes: 32 * 1024 }) : parsedBody;
+      } catch (cause) {
+        if (cause instanceof AuthRequestError && cause.status === 413) {
+          throw failure(413, 'BODY_TOO_LARGE', 'Solicitud demasiado grande.');
+        }
+        throw failure(400, 'INVALID_REQUEST', 'JSON no válido.');
+      }
       const description = validateChangeRequest(body);
       enterStage('model_warmup');
       try { await beforeDeadline(() => waitForWarmup(workDeadline), workDeadline); }

@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, stat, writeFile, rm } from 'node:fs/promises';
 import { runProposalGit, validProposalPath, validatePatchStructure } from './change-proposal.js';
 import { validProposalId } from './proposal-store.js';
+import { readBoundedJson } from './security-http.js';
 import { repositoryIdentity, indexSnapshot, trackedModes, validateApplyFileFingerprints, unchangedApplyPermissions,
   validateConfiguration, noUntracked, same } from './proposal-safety.js';
 
@@ -41,23 +42,13 @@ export function runApplyGit(workspace, args, options = {}) {
   });
 }
 
-async function requestBody(request) {
-  let timer;
-  try {
-    return await Promise.race([ (async () => {
-      const chunks = []; let size = 0;
-      for await (const chunk of request) {
-        size += chunk.length; ensure(size <= 1024); chunks.push(chunk);
-      }
-      return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    })(), new Promise((_, reject) => {
-      timer = setTimeout(() => { request.destroy(); reject(new Error('Body timeout.')); }, 5000);
-    }) ]);
-  } finally { clearTimeout(timer); }
+export function validateApplyRequest(body) {
+  ensure(body && typeof body === 'object' && !Array.isArray(body)
+    && Object.keys(body).length === 1 && Object.hasOwn(body, 'proposalId') && validProposalId(body.proposalId));
 }
 
 export function createApplyChangeProposalHandler({ store, locks, getWorkspaceStatus, json, git = runApplyGit }) {
-  return async function applyChangeProposal(request, response) {
+  return async function applyChangeProposal(request, response, parsedBody) {
     response.setHeader('Cache-Control', 'no-store');
     const reply = (status, code, error) => json(response, status, { applied: false, code, error });
     if (request.method !== 'POST') {
@@ -76,9 +67,8 @@ export function createApplyChangeProposalHandler({ store, locks, getWorkspaceSta
     }
     let body;
     try {
-      body = await requestBody(request);
-      ensure(body && typeof body === 'object' && !Array.isArray(body)
-        && Object.keys(body).length === 1 && Object.hasOwn(body, 'proposalId') && validProposalId(body.proposalId));
+      body = parsedBody === undefined ? await readBoundedJson(request) : parsedBody;
+      validateApplyRequest(body);
     } catch { reply(400, 'INVALID_REQUEST', 'Solicitud no válida.'); return; }
     const available = store.get(body.proposalId);
     if (!available || available.state !== 'ready') {

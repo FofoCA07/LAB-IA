@@ -351,9 +351,8 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
     setProposalConsumed(false);
     setProposalExpired(false);
     try {
-      const response = await fetch('/api/lab/api/opencode/change-proposal', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ request: changeRequest.trim() }),
+      const response = await api.privatePost('/api/lab/api/opencode/change-proposal', {
+        request: changeRequest.trim(),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -485,14 +484,12 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
     setApplyError('');
     const uncertainMessage = 'No se pudo confirmar la aplicación. Pueden existir cambios parciales; se requiere revisión manual. Genera una nueva propuesta después de revisar.';
     try {
-      const response = await fetch('/api/lab/api/opencode/apply-change-proposal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proposalId: proposal.proposalId }),
+      const response = await api.privatePost('/api/lab/api/opencode/apply-change-proposal', {
+        proposalId: proposal.proposalId,
       });
       const data = await response.json();
       if (!response.ok) {
-        setApplyError(typeof data?.error === 'string' && data.error.trim() ? data.error : uncertainMessage);
+        setApplyError(uncertainMessage);
         setApplyState('failed');
         return;
       }
