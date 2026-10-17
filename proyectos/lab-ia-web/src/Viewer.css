@@ -497,3 +497,21 @@
   margin-top: 12px;
   color: var(--text-secondary);
 }
+
+.chat-read-permission {
+  margin: 16px 0;
+  padding: 18px;
+  border: 1px solid var(--qwen-primary);
+  border-radius: 12px;
+  background: var(--bg-panel-soft);
+  color: var(--text-accent);
+}
+
+.chat-read-permission ul {
+  padding-left: 22px;
+  overflow-wrap: anywhere;
+}
+
+.chat-read-permission button {
+  margin-top: 12px;
+}

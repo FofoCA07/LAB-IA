@@ -42,6 +42,16 @@ function validConversation(value) {
     && Number.isFinite(Date.parse(value.actualizada_en));
 }
 
+function validReadAction(action) {
+  return action && validProposalId(action.actionId) && action.type === 'read'
+    && Array.isArray(action.resources) && action.resources.length >= 1 && action.resources.length <= 20
+    && new Set(action.resources).size === action.resources.length
+    && action.resources.every(path => typeof path === 'string' && path.length <= 1024
+      && path === path.trim() && !path.startsWith('/') && !/[\\:]/.test(path)
+      && !Array.from(path).some(c => c.codePointAt(0) < 32 || (c.codePointAt(0) >= 127 && c.codePointAt(0) <= 159))
+      && path.split('/').every(part => part && part !== '.' && part !== '..'));
+}
+
 function validProposalId(value) {
   return typeof value === 'string'
     && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
@@ -98,6 +108,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
   const [messages, setMessages] = useState([]);
   const [conversationId, setConversationId] = useState(null);
   const [draft, setDraft] = useState('');
+  const [pendingRead, setPendingRead] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const requestInProgress = useRef(false);
@@ -542,6 +553,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
         throw new Error('Las instrucciones del agente no son válidas. No se abrió la conversación.');
       }
       if (controller.signal.aborted) return;
+      setPendingRead(null);
       setConversationId(id);
       setActiveAgentId(agentId);
       setLoadedAgent({ id: agentId, content: agent.content });
@@ -561,6 +573,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
   }
 
   function resetChat() {
+    setPendingRead(null);
     setMessages([]);
     setConversationId(null);
     setDraft('');
@@ -584,7 +597,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
 
   async function sendMessage() {
     const content = draft.trim();
-    if (!content || requestInProgress.current || openingRequest.current || !agentReady) return;
+    if (!content || pendingRead || requestInProgress.current || openingRequest.current || !agentReady) return;
 
     const nextMessages = [...messages, { role: 'user', content }];
     requestInProgress.current = true;
@@ -616,6 +629,14 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
       const data = await response.json().catch(() => {
         throw new Error('El servidor no devolvió una respuesta válida.');
       });
+      if (data?.state === 'awaiting_permission') {
+        if (!validProposalId(data.turnId) || !validReadAction(data.action)) {
+          throw new Error('El servidor no devolvió una solicitud de lectura válida.');
+        }
+        setPendingRead({ turnId: data.turnId, actionId: data.action.actionId,
+          resources: [...data.action.resources] });
+        return;
+      }
       if (data?.state !== 'completed' || typeof data.turnId !== 'string'
         || data.message?.role !== 'assistant'
         || typeof data.message.content !== 'string' || !data.message.content.trim()) {
@@ -903,6 +924,14 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
         {(agentsLoading || agentLoading) && <p className="chat-status" role="status">Cargando agente...</p>}
         {agentsError && <p className="chat-error" role="alert">{agentsError}</p>}
         {agentError && <p className="chat-error" role="alert">{agentError}</p>}
+        {pendingRead && (
+          <aside className="chat-read-permission" aria-label="Solicitud de lectura">
+            <p role="status">{activeAgentName} necesita permiso para leer {pendingRead.resources.length} archivo(s).</p>
+            <ul>{pendingRead.resources.map(path => <li key={path}><code>{path}</code></li>)}</ul>
+            <p>Revisa la solicitud en Acciones. Autorizar la lectura todavía no reanuda esta conversación.</p>
+            <button type="button" className="agent-select" onClick={() => onSelectSection('Acciones')}>Ver en Acciones</button>
+          </aside>
+        )}
         {isLoading && <p className="chat-status" role="status">Pensando...</p>}
         {error && <p className="chat-error" role="alert">{error}</p>}
       </section>
@@ -920,7 +949,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
           />
           <div className="composer-footer">
             <span>{activeAgentName} · Qwen3:8b</span>
-            <button type="button" disabled={isLoading || openingId !== null || !draft.trim() || !agentReady} onClick={sendMessage}>Enviar</button>
+            <button type="button" disabled={isLoading || pendingRead !== null || openingId !== null || !draft.trim() || !agentReady} onClick={sendMessage}>Enviar</button>
           </div>
         </div>
         <p className="composer-note">Enter para enviar · Shift+Enter para una nueva línea. Los mensajes se guardan localmente y pueden recuperarse desde Historial.</p>

@@ -2,7 +2,7 @@ import { createTurnStore, isTurnId, TURN_ERROR } from './turn-store.js';
 import { generateChatReply } from './chat-ollama.js';
 import { readBoundedJson } from './security-http.js';
 
-export function createChatHandler({ database, loadAgent, json, generate = generateChatReply, turns = createTurnStore() }) {
+export function createChatHandler({ database, loadAgent, json, generate = generateChatReply, turns = createTurnStore(), requestReadPermission = null }) {
   const generating = new Set();
   const fail = (response, status, error) => json(response, status, { error });
   async function respond(request, response, rawId, parsedBody) {
@@ -46,6 +46,10 @@ export function createChatHandler({ database, loadAgent, json, generate = genera
       if (existing) return fail(response, 409, 'Envía un nuevo mensaje para volver a intentarlo.');
       try { turn = turns.create({ conversationId: id, agentId: conversation.agente_id, userMessageId: last.id }); }
       catch { return fail(response, 503, 'No se pudo iniciar el turno.'); }
+      if (conversation.agente_id === 'senior-developer' && requestReadPermission) {
+        const action = await requestReadPermission({ lastUserMessage: last.contenido, turnId: turn.turnId, turns });
+        if (action) return json(response, 200, { turnId: turn.turnId, state: 'awaiting_permission', action });
+      }
       const instructions = await loadAgent(conversation.agente_id);
       if (typeof instructions !== 'string' || !instructions.trim()) throw new Error();
       if (turns.get(turn.turnId)?.state !== 'processing') throw new Error();

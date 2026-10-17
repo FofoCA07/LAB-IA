@@ -7,6 +7,7 @@ import { createPrivateProposalHandlers } from './proposal-security.js';
 import { attachPairingTerminal } from './pairing-terminal.js';
 import { createPublicMessageHandler } from './conversation-messages.js';
 import { createChatHandler } from './chat.js';
+import { createChatReadPermission } from './chat-read-permission.js';
 import { loadAgentInstructions } from './agent-instructions.js';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
@@ -355,7 +356,9 @@ const applyChangeProposal = createApplyChangeProposalHandler({ store: proposalSt
 const turns = createTurnStore();
 const turnCleanup = setInterval(() => turns.cleanup(), 30_000);
 turnCleanup.unref();
-const chat = createChatHandler({ database, json, turns, loadAgent: (id) => loadAgentInstructions(agentsDir, id) });
+const requestReadPermission = createChatReadPermission({ actionStore, locks: proposalLocks,
+  getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }) });
+const chat = createChatHandler({ database, json, turns, requestReadPermission, loadAgent: (id) => loadAgentInstructions(agentsDir, id) });
 const addUserMessage = createPublicMessageHandler({ database, chat, json });
 
 const securityStore = createSecurityStore();

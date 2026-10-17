@@ -42,8 +42,9 @@ export function createActionStore({ maxActions = 64, maxBytes = 8 * 1024 * 1024,
       } else { retained -= entry.bytes; entries.delete(id); }
     }
   }
-  async function createReadAction(input) {
+  async function createReadAction(input, { beforePublish, expectedIdentity } = {}) {
     ensure(input && typeof input === 'object');
+    ensure(beforePublish === undefined || typeof beforePublish === 'function');
     const { agentId, agentName, workspace, projectName, reason, paths } = input;
     ensure(text(agentId, 128) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(agentId)
       && text(agentName, 160) && text(projectName, 200) && text(reason, 2000));
@@ -54,6 +55,7 @@ export function createActionStore({ maxActions = 64, maxBytes = 8 * 1024 * 1024,
     ensure(typeof workspace === 'string' && isAbsolute(workspace));
     const canonical = await realpath(workspace);
     const identity = await repositoryIdentity(canonical, git, Date.now() + 10_000);
+    ensure(expectedIdentity === undefined || same(identity, expectedIdentity));
     cleanup();
     const created = wallNow();
     const record = { actionId: randomUUID(), agentId, agentName, type: 'read', workspace: canonical,
@@ -61,6 +63,8 @@ export function createActionStore({ maxActions = 64, maxBytes = 8 * 1024 * 1024,
       expiresAt: new Date(created + TTL).toISOString(), identity };
     const bytes = measure(record) + reservation;
     ensure(entries.size < maxActions && retained + bytes <= maxBytes);
+    // Internal synchronous binding: a failed turn attachment leaves no visible action.
+    if (beforePublish) ensure(beforePublish(publicRecord(record)) === undefined);
     entries.set(record.actionId, { record, bytes, until: now() + TTL });
     retained += bytes;
     return publicRecord(record);
