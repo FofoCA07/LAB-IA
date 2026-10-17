@@ -55,3 +55,28 @@
     gap: 12px;
   }
 }
+
+.logout-button {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  color: var(--text);
+  border-color: var(--qwen-primary);
+}
+
+.logout-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 480px) {
+  .header-status {
+    flex-wrap: wrap;
+  }
+}

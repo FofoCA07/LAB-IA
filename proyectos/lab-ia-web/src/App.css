@@ -23,3 +23,8 @@
     flex-direction: column;
   }
 }
+
+.app-auth-error {
+  padding: 12px 28px;
+  background: var(--bg-panel-soft);
+}

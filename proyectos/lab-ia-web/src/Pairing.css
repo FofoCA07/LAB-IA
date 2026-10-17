@@ -1,0 +1,93 @@
+.pairing-screen {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(ellipse at top, #25264b 0%, var(--bg-main) 65%);
+}
+
+.pairing-card {
+  width: min(100%, 460px);
+  padding: clamp(24px, 5vw, 40px);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--bg-panel-soft);
+  box-shadow: 0 24px 70px #0004;
+}
+
+.pairing-brand {
+  color: var(--text-accent);
+  font-weight: 750;
+  letter-spacing: 0.12em;
+}
+
+.pairing-card h1 {
+  margin: 16px 0 12px;
+  font-size: 26px;
+  line-height: 1.25;
+}
+
+.pairing-card > p:not(.pairing-brand),
+.pairing-card ol {
+  color: var(--muted);
+}
+
+.pairing-card ol {
+  padding-left: 22px;
+  margin: 24px 0;
+  line-height: 1.9;
+}
+
+.pairing-card code {
+  color: var(--text-accent);
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--bg-accent);
+}
+
+.pairing-card form {
+  display: grid;
+  gap: 12px;
+}
+
+.pairing-card label {
+  font-weight: 600;
+}
+
+.pairing-card input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-sidebar);
+  color: var(--text);
+  font: inherit;
+}
+
+.pairing-card input:focus-visible {
+  outline: 2px solid var(--qwen-primary);
+  outline-offset: 3px;
+}
+
+.pairing-card button {
+  padding: 12px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(110deg, var(--qwen-primary), var(--qwen-secondary));
+  color: white;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.pairing-card button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.auth-error {
+  color: #fda4af;
+}
+
+.auth-checking {
+  color: var(--muted);
+}
