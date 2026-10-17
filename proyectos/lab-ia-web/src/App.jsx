@@ -76,7 +76,7 @@ function App() {
           <Viewer activeSection={activeSection} onSelectSection={setActiveSection}
             csrfToken={auth.csrfToken} onSessionExpired={invalidateSession} />
         </div>
-        {activeSection === 'Acciones' && <Actions />}
+        {activeSection === 'Acciones' && <Actions csrfToken={auth.csrfToken} onSessionExpired={invalidateSession} />}
       </div>
     </div>
   );

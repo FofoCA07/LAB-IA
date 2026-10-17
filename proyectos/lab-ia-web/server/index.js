@@ -602,9 +602,8 @@ turnCleanup.unref();
 const chat = createChatHandler({ database, json, turns, loadAgent: (id) => loadAgentInstructions(agentsDir, id) });
 const addUserMessage = createPublicMessageHandler({ database, chat, json });
 
-const actions = createActionHandlers({ store: actionStore, json });
-
 const securityStore = createSecurityStore();
+const actions = createActionHandlers({ store: actionStore, securityStore, json });
 const auth = createAuthHandler({ store: securityStore, json });
 const securityCleanup = setInterval(() => securityStore.cleanup(), 30_000);
 securityCleanup.unref();

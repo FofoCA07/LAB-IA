@@ -1,6 +1,6 @@
 import { getSession } from './auth';
 
-// Authority belongs to the mounted Viewer; no storage and no automatic retries.
+// Authority belongs to the mounted private view; no storage and no automatic retries.
 export function createLabApi(csrfToken, onSessionExpired) {
   let expired = false;
   function invalidate() {
@@ -11,8 +11,11 @@ export function createLabApi(csrfToken, onSessionExpired) {
   }
   async function request(path, method, body, { signal } = {}) {
     if (expired) throw new Error('La sesión terminó. Empareja el dispositivo de nuevo.');
-    if (!/^\/api\/lab\/api\/(?:agents(?:\/[^/?]+)?|conversations(?:\/[^/?]+(?:\/messages|\/respond|\/turns\/[^/?]+)?)?)$/.test(path)) {
-      throw new Error('Solicitud de chat no válida.');
+    const isChat = /^\/api\/lab\/api\/(?:agents(?:\/[^/?]+)?|conversations(?:\/[^/?]+(?:\/messages|\/respond|\/turns\/[^/?]+)?)?)$/.test(path);
+    const isActions = (method === 'GET' && path === '/api/lab/api/actions')
+      || (method === 'POST' && path === '/api/lab/api/actions/decision');
+    if (!isChat && !isActions) {
+      throw new Error('Solicitud privada no válida.');
     }
     let response;
     try {

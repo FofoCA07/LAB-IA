@@ -10,6 +10,7 @@ import process from 'node:process';
 import { Readable } from 'node:stream';
 import { createActionStore } from './action-store.js';
 import { createActionHandlers } from './actions.js';
+import { createSecurityStore } from './security-store.js';
 import { readSelectedTextFiles, runProposalGit } from './change-proposal.js';
 import { createWorkspaceLocks } from './proposal-store.js';
 
@@ -32,11 +33,22 @@ async function fixture(t, options = {}) {
 const approve = (store, action) => store.decide({ actionId: action.actionId, decision: 'approve_once' });
 const deny = (store, action) => store.decide({ actionId: action.actionId, decision: 'deny' });
 
+function authority() {
+  const securityStore = createSecurityStore();
+  const session = securityStore.pair(securityStore.createPairing());
+  return { securityStore, headers: { host: 'localhost:5173', origin: 'http://localhost:5173',
+    cookie: `lab_session=${session.sessionId}`, 'x-lab-request': '1',
+    'x-lab-csrf': securityStore.getSession(session.sessionId).csrfToken, 'content-type': 'application/json' } };
+}
+
 function http(store) {
-  const handlers = createActionHandlers({ store, json: (response, status, body) => Object.assign(response, { status, body }) });
+  const { securityStore, headers } = authority();
+  const handlers = createActionHandlers({ store, securityStore,
+    json: (response, status, body) => Object.assign(response, { status, body }) });
   return async (body, options = {}) => {
     const request = Readable.from([Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]);
-    Object.assign(request, { method: 'POST', url: '/api/actions/decision', headers: { 'content-type': 'application/json', host: 'localhost', ...options.headers }, ...options });
+    Object.assign(request, { method: 'POST', url: '/api/actions/decision', ...options,
+      headers: { ...headers, ...options.headers } });
     const response = { headers: {}, setHeader(key, value) { this.headers[key] = value; } };
     await handlers.decision(request, response);
     return response;
@@ -198,9 +210,10 @@ for (const kind of ['workspace changed', 'repository changed', 'private exceptio
 test('HTTP decision exact schema, unknown UUID, methods, origin, content type and bounded body', async (t) => {
   const f = await fixture(t); const action = await f.store.createReadAction(f.input); const request = http(f.store);
   for (const body of [null, [], {}, { actionId: action.actionId, decision: 'approve_once', extra: true },
-    { actionId: 'bad', decision: 'deny' }, { actionId: action.actionId, decision: 'approve' }, '{invalid', 'x'.repeat(1025)]) {
+    { actionId: 'bad', decision: 'deny' }, { actionId: action.actionId, decision: 'approve' }, '{invalid']) {
     assert.equal((await request(body)).status, 400);
   }
+  assert.equal((await request('x'.repeat(1025))).status, 413);
   assert.equal((await request({ actionId: randomUUID(), decision: 'deny' })).status, 409);
   assert.equal((await request({}, { method: 'GET' })).status, 405);
   assert.equal((await request({}, { url: '/api/actions/decision?x=1' })).status, 400);
@@ -214,10 +227,11 @@ test('HTTP decision exact schema, unknown UUID, methods, origin, content type an
 test('HTTP list is safe, has no creation or consumption handlers', async (t) => {
   const f = await fixture(t); const action = await f.store.createReadAction(f.input);
   await approve(f.store, action);
-  const handlers = createActionHandlers({ store: f.store, json: (response, status, body) => Object.assign(response, { status, body }) });
+  const { securityStore, headers } = authority();
+  const handlers = createActionHandlers({ store: f.store, securityStore, json: (response, status, body) => Object.assign(response, { status, body }) });
   assert.deepEqual(Object.keys(handlers), ['list', 'decision']);
   const response = { setHeader() {} };
-  handlers.list({ method: 'GET' }, response);
+  handlers.list({ method: 'GET', headers }, response);
   assert.equal(response.status, 200); assert.equal(response.body.actions[0].state, 'completed');
   assert.ok(!JSON.stringify(response.body).includes(marker)); assert.ok(!JSON.stringify(response.body).includes(f.workspace));
   handlers.list({ method: 'POST' }, response); assert.equal(response.status, 405);

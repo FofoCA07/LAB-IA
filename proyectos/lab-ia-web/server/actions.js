@@ -1,50 +1,42 @@
-import { Buffer } from 'node:buffer';
+import { createSessionGuard, readBoundedJson, AuthRequestError } from './security-http.js';
 
-// HTTP surface deliberately exposes neither creation nor private-result consumption.
-export function createActionHandlers({ store, json }) {
+export const actionDecisionBodyLimit = 1024;
+
+// HTTP exposes neither action creation nor private-result consumption.
+export function createActionHandlers({ store, securityStore, json }) {
+  const guard = createSessionGuard(securityStore);
+  function reject(request, response, error) {
+    if (response.headersSent || response.destroyed) return;
+    response.setHeader('Connection', 'close');
+    response.once?.('finish', () => request.destroy());
+    return json(response, error instanceof AuthRequestError ? error.status : 500,
+      { error: 'No se pudo autorizar o procesar la solicitud de acciones.' });
+  }
   function list(request, response) {
     response.setHeader('Cache-Control', 'no-store');
     if (request.method !== 'GET') {
       response.setHeader('Allow', 'GET');
       return json(response, 405, { code: 'METHOD', error: 'Método no permitido.' });
     }
-    return json(response, 200, store.listActions());
+    try {
+      guard(request);
+      return json(response, 200, store.listActions());
+    } catch (error) { return reject(request, response, error); }
   }
   async function decision(request, response) {
     response.setHeader('Cache-Control', 'no-store');
-    const invalid = () => json(response, 400, { code: 'INVALID_REQUEST', error: 'Solicitud no válida.' });
     if (request.method !== 'POST') {
       response.setHeader('Allow', 'POST');
       return json(response, 405, { code: 'METHOD', error: 'Método no permitido.' });
     }
-    if (request.url.includes('?')) return invalid();
-    if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
-      return json(response, 415, { code: 'CONTENT_TYPE', error: 'Se requiere application/json.' });
-    }
-    if (request.headers.origin) {
-      let origin;
-      try { origin = new URL(request.headers.origin); } catch { /* Rejected below. */ }
-      if (!origin || !['http:', 'https:'].includes(origin.protocol) || origin.host !== request.headers.host) {
-        return json(response, 403, { code: 'ORIGIN', error: 'Origen no permitido.' });
-      }
-    }
-    let body; let timer;
     try {
-      body = await Promise.race([(async () => {
-        const chunks = []; let size = 0;
-        for await (const chunk of request) {
-          size += chunk.length;
-          if (size > 1024) throw new Error();
-          chunks.push(chunk);
-        }
-        return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
-      })(), new Promise((_, reject) => {
-        timer = setTimeout(() => { request.destroy(); reject(new Error()); }, 5000);
-      })]);
-    } catch { return invalid(); }
-    finally { clearTimeout(timer); }
-    const result = await store.decide(body);
-    return json(response, result.status, result.body);
+      guard(request);
+      if (request.url.includes('?')) throw new AuthRequestError(400);
+      const body = await readBoundedJson(request, { maxBytes: actionDecisionBodyLimit });
+      guard(request); // Expiry/logout during body streaming must not claim an action.
+      const result = await store.decide(body);
+      return json(response, result.status, result.body);
+    } catch (error) { return reject(request, response, error); }
   }
   return Object.freeze({ list, decision });
 }

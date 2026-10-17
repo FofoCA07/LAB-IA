@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './Actions.css';
+import { createLabApi } from './lab-api';
 
 const TYPES = {
   read: 'Lectura', write: 'Escritura', command: 'Comando', test: 'Prueba',
@@ -90,7 +91,8 @@ function parseActions(data) {
   });
 }
 
-export default function Actions() {
+export default function Actions({ csrfToken, onSessionExpired }) {
+  const api = useMemo(() => createLabApi(csrfToken, onSessionExpired), [csrfToken, onSessionExpired]);
   const [actions, setActions] = useState([]);
   const [activeTab, setActiveTab] = useState('pending');
   const [loading, setLoading] = useState(true);
@@ -102,11 +104,11 @@ export default function Actions() {
   const visibleActions = actions.filter((action) => belongsToTab(action, activeTab));
   const busy = loading || processingId !== null;
 
-  async function loadActions() {
+  const loadActions = useCallback(async () => {
     const version = ++requestVersion.current;
     setLoading(true);
     try {
-      const response = await fetch('/api/lab/api/actions', { cache: 'no-store' });
+      const response = await api.privateGet('/api/lab/api/actions');
       if (!response.ok) throw new Error('Request failed');
       const nextActions = parseActions(await response.json());
       if (version === requestVersion.current) setActions(nextActions);
@@ -118,13 +120,13 @@ export default function Actions() {
     } finally {
       if (version === requestVersion.current) setLoading(false);
     }
-  }
+  }, [api]);
 
   useEffect(() => {
     let active = true;
     queueMicrotask(() => { if (active) void loadActions(); });
     return () => { active = false; requestVersion.current += 1; };
-  }, []);
+  }, [loadActions]);
 
   async function decide(action, decision) {
     if (busyRef.current || loading || action.status !== 'pending' || action.type !== 'read') return;
@@ -138,10 +140,8 @@ export default function Actions() {
     setProcessingId(action.id);
     setError('');
     try {
-      const response = await fetch('/api/lab/api/actions/decision', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actionId: action.id, decision }),
+      const response = await api.privatePost('/api/lab/api/actions/decision', {
+        actionId: action.id, decision,
       });
       if (!response.ok) throw new Error('Decision failed');
     } catch {
