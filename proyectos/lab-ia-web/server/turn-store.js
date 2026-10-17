@@ -7,7 +7,7 @@ export const TURN_STATES = Object.freeze(['processing', 'awaiting_permission', '
 const active = new Set(['processing', 'awaiting_permission', 'continuing']);
 const transitions = {
   processing: ['completed', 'failed', 'awaiting_permission', 'expired'],
-  awaiting_permission: ['continuing', 'denied', 'expired'],
+  awaiting_permission: ['continuing', 'denied', 'expired', 'failed'],
   continuing: ['completed', 'failed', 'expired'],
 };
 export const TURN_ERROR = Object.freeze({ code: 'CHAT_RESPONSE_FAILED',
@@ -41,6 +41,11 @@ export function createTurnStore({ now = Date.now, ttlMs = 600_000, retentionMs =
   function findForMessage(conversationId, userMessageId) {
     cleanup();
     return copy([...turns.values()].find(turn => turn.conversationId === conversationId && turn.userMessageId === userMessageId));
+  }
+  function findForAction(actionId) {
+    cleanup();
+    if (!isTurnId(actionId)) return null;
+    return copy([...turns.values()].find(turn => turn.actionId === actionId));
   }
   function create({ conversationId, agentId, userMessageId }) {
     cleanup();
@@ -86,7 +91,7 @@ export function createTurnStore({ now = Date.now, ttlMs = 600_000, retentionMs =
   function attachAction(turnId, actionId) {
     cleanup();
     const turn = turns.get(turnId);
-    if (!turn || turn.state !== 'awaiting_permission' || turn.actionId !== null || !isTurnId(actionId)) {
+    if (!turn || turn.state !== 'awaiting_permission' || turn.actionId !== null || !isTurnId(actionId) || [...turns.values()].some(other => other.actionId === actionId)) {
       throw new Error('Invalid turn action');
     }
     turn.actionId = actionId; turn.updatedAt = now();
@@ -98,6 +103,6 @@ export function createTurnStore({ now = Date.now, ttlMs = 600_000, retentionMs =
       || !turn.actionId || turn.actionId !== actionId) return null;
     return turn;
   }
-  return { create, get, findActive, findForMessage, transition, completeWithPersistence, attachAction, getForContinuation, cleanup,
+  return { create, get, findActive, findForMessage, findForAction, transition, completeWithPersistence, attachAction, getForContinuation, cleanup,
     stats() { cleanup(); return { count: turns.size, reservedBytes: turns.size * 2048 }; } };
 }

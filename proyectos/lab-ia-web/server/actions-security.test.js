@@ -213,7 +213,7 @@ test('direct backend HTTP has no loopback or forwarded-Host bypass and shares lo
 
 test('production wiring shares securityStore; public handlers cannot create or consume read actions', async () => {
   const index = await readFile(new URL('./index.js', import.meta.url), 'utf8');
-  assert.match(index, /createActionHandlers\(\{ store: actionStore, securityStore, json \}\)/);
+  assert.match(index, /createActionHandlers\(\{ store: actionStore, securityStore, json, onDecision: readContinuation\.notifyDecision \}\)/);
   assert.match(index, /createAuthHandler\(\{ store: securityStore, json \}\)/);
   assert.match(index, /createChatReadPermission\(\{ actionStore, locks: proposalLocks/);
   for (const file of ['./chat.js', './chat-routes.js', '../src/Actions.jsx']) {

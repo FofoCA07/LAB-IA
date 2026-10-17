@@ -118,6 +118,7 @@ export function createActionStore({ maxActions = 64, maxBytes = 8 * 1024 * 1024,
   }
   return Object.freeze({
     createReadAction, decide, cleanup,
+    getAction(actionId) { cleanup(); const entry = entries.get(actionId); return entry ? publicRecord(entry.record) : null; },
     listActions() { cleanup(); return { actions: [...entries.values()].map(({ record }) => publicRecord(record)) }; },
     consumeCompletedReadResult(actionId) {
       cleanup();

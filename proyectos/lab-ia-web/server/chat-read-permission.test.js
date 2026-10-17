@@ -161,7 +161,7 @@ test('no auth/CSRF/origin cannot call planner or create/attach any action', asyn
   }
 });
 
-test('approve may read via existing store but never resumes Chat or persists assistant', async t => {
+test('direct store approval reads but requires handler notification to dispatch continuation', async t => {
   const f = await fixture(t); const response = await f.request();
   const decision = await f.actionStore.decide({ actionId: response.body.action.actionId, decision: 'approve_once' });
   assert.equal(decision.status, 200); assert.equal(f.counts.reads, 1); assert.equal(f.counts.chat, 0);

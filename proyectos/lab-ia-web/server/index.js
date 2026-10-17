@@ -8,6 +8,8 @@ import { attachPairingTerminal } from './pairing-terminal.js';
 import { createPublicMessageHandler } from './conversation-messages.js';
 import { createChatHandler } from './chat.js';
 import { createChatReadPermission } from './chat-read-permission.js';
+import { createChatReadContinuation } from './chat-read-continuation.js';
+import { createChatPersistence } from './chat-persistence.js';
 import { loadAgentInstructions } from './agent-instructions.js';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
@@ -358,11 +360,14 @@ const turnCleanup = setInterval(() => turns.cleanup(), 30_000);
 turnCleanup.unref();
 const requestReadPermission = createChatReadPermission({ actionStore, locks: proposalLocks,
   getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }) });
-const chat = createChatHandler({ database, json, turns, requestReadPermission, loadAgent: (id) => loadAgentInstructions(agentsDir, id) });
+const readContinuation = createChatReadContinuation({ turnStore: turns, actionStore,
+  ...createChatPersistence(database), loadAgent: id => loadAgentInstructions(agentsDir, id) });
+const chat = createChatHandler({ database, json, turns, requestReadPermission,
+  reconcileReadTurn: readContinuation.reconcile, loadAgent: (id) => loadAgentInstructions(agentsDir, id) });
 const addUserMessage = createPublicMessageHandler({ database, chat, json });
 
 const securityStore = createSecurityStore();
-const actions = createActionHandlers({ store: actionStore, securityStore, json });
+const actions = createActionHandlers({ store: actionStore, securityStore, json, onDecision: readContinuation.notifyDecision });
 const auth = createAuthHandler({ store: securityStore, json });
 const privateProposals = createPrivateProposalHandlers({ securityStore, json, changeProposal, applyChangeProposal });
 const securityCleanup = setInterval(() => securityStore.cleanup(), 30_000);

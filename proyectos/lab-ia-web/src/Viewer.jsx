@@ -109,6 +109,11 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
   const [conversationId, setConversationId] = useState(null);
   const [draft, setDraft] = useState('');
   const [pendingRead, setPendingRead] = useState(null);
+  const [readStatusLoading, setReadStatusLoading] = useState(false);
+  const [readStatusError, setReadStatusError] = useState('');
+  const readStatusRequest = useRef(null);
+  const displayedReadTurn = useRef(null);
+  useEffect(() => () => readStatusRequest.current?.abort(), []);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const requestInProgress = useRef(false);
@@ -553,7 +558,12 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
         throw new Error('Las instrucciones del agente no son válidas. No se abrió la conversación.');
       }
       if (controller.signal.aborted) return;
+      readStatusRequest.current?.abort();
+      readStatusRequest.current = null;
+      setReadStatusLoading(false);
+      displayedReadTurn.current = null;
       setPendingRead(null);
+      setReadStatusError('');
       setConversationId(id);
       setActiveAgentId(agentId);
       setLoadedAgent({ id: agentId, content: agent.content });
@@ -573,6 +583,11 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
   }
 
   function resetChat() {
+    readStatusRequest.current?.abort();
+    readStatusRequest.current = null;
+    displayedReadTurn.current = null;
+    setReadStatusLoading(false);
+    setReadStatusError('');
     setPendingRead(null);
     setMessages([]);
     setConversationId(null);
@@ -595,14 +610,55 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
   }
 
 
+  async function refreshReadStatus() {
+    const pending = pendingRead;
+    if (!pending || displayedReadTurn.current !== pending.turnId || readStatusRequest.current
+      || !['awaiting_permission', 'continuing'].includes(pending.state)) return;
+    const controller = new AbortController();
+    readStatusRequest.current = controller;
+    setReadStatusLoading(true);
+    setReadStatusError('');
+    try {
+      const response = await api.privateGet(`/api/lab/api/conversations/${conversationId}/turns/${pending.turnId}`,
+        { signal: controller.signal });
+      if (controller.signal.aborted || displayedReadTurn.current !== pending.turnId) return;
+      const data = response.status === 404 ? { turnId: pending.turnId, state: 'expired' }
+        : response.ok ? await response.json() : null;
+      if (controller.signal.aborted || displayedReadTurn.current !== pending.turnId) return;
+      if (!data || data.turnId !== pending.turnId
+        || !['awaiting_permission', 'continuing', 'completed', 'denied', 'expired', 'failed'].includes(data.state)) {
+        throw new Error();
+      }
+      if (data.state === 'completed') {
+        if (data.message?.role !== 'assistant' || typeof data.message.content !== 'string' || !data.message.content.trim()) throw new Error();
+        displayedReadTurn.current = null;
+        setMessages(previous => [...previous, { role: 'assistant', content: data.message.content }]);
+        setPendingRead(null);
+      } else {
+        if (!['awaiting_permission', 'continuing'].includes(data.state)) displayedReadTurn.current = null;
+        setPendingRead({ ...pending, state: data.state });
+      }
+    } catch {
+      if (!controller.signal.aborted) setReadStatusError('No se pudo actualizar el estado. Inténtalo de nuevo.');
+    } finally {
+      if (readStatusRequest.current === controller) {
+        readStatusRequest.current = null;
+        setReadStatusLoading(false);
+      }
+    }
+  }
+
   async function sendMessage() {
     const content = draft.trim();
-    if (!content || pendingRead || requestInProgress.current || openingRequest.current || !agentReady) return;
+    if (!content || (pendingRead && ['awaiting_permission', 'continuing'].includes(pendingRead.state)) || requestInProgress.current || openingRequest.current || !agentReady) return;
 
     const nextMessages = [...messages, { role: 'user', content }];
     requestInProgress.current = true;
     setError('');
     setIsLoading(true);
+    setPendingRead(null);
+    displayedReadTurn.current = null;
+    setReadStatusError('');
 
     let userSaved = false;
     try {
@@ -633,7 +689,8 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
         if (!validProposalId(data.turnId) || !validReadAction(data.action)) {
           throw new Error('El servidor no devolvió una solicitud de lectura válida.');
         }
-        setPendingRead({ turnId: data.turnId, actionId: data.action.actionId,
+        displayedReadTurn.current = data.turnId;
+        setPendingRead({ turnId: data.turnId, actionId: data.action.actionId, state: 'awaiting_permission',
           resources: [...data.action.resources] });
         return;
       }
@@ -926,10 +983,24 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
         {agentError && <p className="chat-error" role="alert">{agentError}</p>}
         {pendingRead && (
           <aside className="chat-read-permission" aria-label="Solicitud de lectura">
-            <p role="status">{activeAgentName} necesita permiso para leer {pendingRead.resources.length} archivo(s).</p>
+            <p role="status">{pendingRead.state === 'awaiting_permission'
+              ? `${activeAgentName} necesita permiso para leer ${pendingRead.resources.length} archivo(s).`
+              : pendingRead.state === 'continuing' ? 'Lectura autorizada. Preparando la respuesta…'
+                : pendingRead.state === 'denied' ? 'Permiso de lectura rechazado.'
+                  : pendingRead.state === 'expired' ? 'La solicitud de lectura venció.'
+                    : 'No se pudo completar la respuesta. Envía un nuevo mensaje para intentarlo otra vez.'}</p>
             <ul>{pendingRead.resources.map(path => <li key={path}><code>{path}</code></li>)}</ul>
-            <p>Revisa la solicitud en Acciones. Autorizar la lectura todavía no reanuda esta conversación.</p>
-            <button type="button" className="agent-select" onClick={() => onSelectSection('Acciones')}>Ver en Acciones</button>
+            {['awaiting_permission', 'continuing'].includes(pendingRead.state) && (
+              <>
+                {pendingRead.state === 'awaiting_permission' && <>
+                  <p>Revisa la solicitud en Acciones y después actualiza el estado aquí.</p>
+                  <button type="button" className="agent-select" onClick={() => onSelectSection('Acciones')}>Ver en Acciones</button>
+                </>}
+                <button type="button" className="agent-select" disabled={readStatusLoading}
+                  onClick={() => void refreshReadStatus()}>{readStatusLoading ? 'Actualizando…' : 'Actualizar estado'}</button>
+              </>
+            )}
+            {readStatusError && <p role="alert" className="chat-error">{readStatusError}</p>}
           </aside>
         )}
         {isLoading && <p className="chat-status" role="status">Pensando...</p>}
@@ -949,7 +1020,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
           />
           <div className="composer-footer">
             <span>{activeAgentName} · Qwen3:8b</span>
-            <button type="button" disabled={isLoading || pendingRead !== null || openingId !== null || !draft.trim() || !agentReady} onClick={sendMessage}>Enviar</button>
+            <button type="button" disabled={isLoading || (pendingRead && ['awaiting_permission', 'continuing'].includes(pendingRead.state)) || openingId !== null || !draft.trim() || !agentReady} onClick={sendMessage}>Enviar</button>
           </div>
         </div>
         <p className="composer-note">Enter para enviar · Shift+Enter para una nueva línea. Los mensajes se guardan localmente y pueden recuperarse desde Historial.</p>

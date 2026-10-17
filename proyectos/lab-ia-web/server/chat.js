@@ -1,9 +1,11 @@
 import { createTurnStore, isTurnId, TURN_ERROR } from './turn-store.js';
 import { generateChatReply } from './chat-ollama.js';
 import { readBoundedJson } from './security-http.js';
+import { createChatPersistence } from './chat-persistence.js';
 
-export function createChatHandler({ database, loadAgent, json, generate = generateChatReply, turns = createTurnStore(), requestReadPermission = null }) {
+export function createChatHandler({ database, loadAgent, json, generate = generateChatReply, turns = createTurnStore(), requestReadPermission = null, reconcileReadTurn = () => {} }) {
   const generating = new Set();
+  const { persistAssistant } = createChatPersistence(database);
   const fail = (response, status, error) => json(response, status, { error });
   async function respond(request, response, rawId, parsedBody) {
     response.setHeader('Cache-Control', 'no-store');
@@ -56,22 +58,7 @@ export function createChatHandler({ database, loadAgent, json, generate = genera
       const content = await generate({ messages: [{ role: 'system', content: instructions },
         ...history.map(({ rol, contenido }) => ({ role: rol, content: contenido }))] });
       if (typeof content !== 'string' || !content.trim()) throw new Error();
-      turns.completeWithPersistence(turn.turnId, () => {
-        let messageId;
-        database.exec('BEGIN');
-        try {
-          const current = database.prepare('SELECT id FROM mensajes WHERE conversacion_id = ? ORDER BY id DESC LIMIT 1').get(id);
-          if (current?.id !== last.id) throw new Error();
-          const timestamp = new Date().toISOString();
-          const inserted = database.prepare('INSERT INTO mensajes (conversacion_id, rol, contenido, creado_en) VALUES (?, ?, ?, ?)')
-            .run(id, 'assistant', content, timestamp);
-          messageId = Number(inserted.lastInsertRowid);
-          if (!Number.isSafeInteger(messageId) || messageId <= 0) throw new Error();
-          database.prepare('UPDATE conversaciones SET actualizada_en = ? WHERE id = ?').run(timestamp, id);
-          database.exec('COMMIT');
-        } catch (error) { database.exec('ROLLBACK'); throw error; }
-        return messageId;
-      });
+      turns.completeWithPersistence(turn.turnId, () => persistAssistant(turn, content));
       return json(response, 200, { turnId: turn.turnId, state: 'completed', message: { role: 'assistant', content } });
     } catch {
       if (turn) {
@@ -96,6 +83,7 @@ export function createChatHandler({ database, loadAgent, json, generate = genera
       if (!database.prepare('SELECT agente_id FROM conversaciones WHERE id = ?').get(id)) {
         return fail(response, 404, 'Turno no encontrado.');
       }
+      reconcileReadTurn(turnId, id);
       const turn = turns.get(turnId);
       if (!turn || turn.conversationId !== id) return fail(response, 404, 'Turno no encontrado.');
       const body = { turnId, state: turn.state };

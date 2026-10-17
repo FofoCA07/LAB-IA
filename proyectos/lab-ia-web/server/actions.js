@@ -3,7 +3,7 @@ import { createSessionGuard, readBoundedJson, AuthRequestError } from './securit
 export const actionDecisionBodyLimit = 1024;
 
 // HTTP exposes neither action creation nor private-result consumption.
-export function createActionHandlers({ store, securityStore, json }) {
+export function createActionHandlers({ store, securityStore, json, onDecision = () => {} }) {
   const guard = createSessionGuard(securityStore);
   function reject(request, response, error) {
     if (response.headersSent || response.destroyed) return;
@@ -35,6 +35,10 @@ export function createActionHandlers({ store, securityStore, json }) {
       const body = await readBoundedJson(request, { maxBytes: actionDecisionBodyLimit });
       guard(request); // Expiry/logout during body streaming must not claim an action.
       const result = await store.decide(body);
+      if (result.status === 200 || result.status === 422) {
+        // Notification carries only a server-validated ID, never the private read result.
+        onDecision(body.actionId);
+      }
       return json(response, result.status, result.body);
     } catch (error) { return reject(request, response, error); }
   }
