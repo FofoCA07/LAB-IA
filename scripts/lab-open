@@ -13,21 +13,49 @@ if [[ $# -gt 1 ]]; then
     exit 1
 fi
 
+# Shared semantics with server/runtime-paths.js. Validation does not create files.
+script_path=$(realpath -e -- "${BASH_SOURCE[0]}")
+script_dir=$(dirname -- "$script_path")
+lab_root=$(cd -- "$script_dir/.." && pwd -P)
+runtime_source=legacy
+# Transitional fallback only: remove after the real runtime migration.
+runtime_dir="$lab_root/runtime"
+if [[ ${LAB_RUNTIME_DIR+x} ]]; then
+    if [[ "$LAB_RUNTIME_DIR" != /* || "$LAB_RUNTIME_DIR" == *[$'\001'-$'\037'$'\177']* ]]; then
+        printf 'Error: LAB_RUNTIME_DIR debe ser una ruta absoluta externa válida.\n' >&2
+        exit 1
+    fi
+    if ! runtime_dir=$(realpath -m -- "$LAB_RUNTIME_DIR" 2>/dev/null); then
+        printf 'Error: LAB_RUNTIME_DIR debe ser una ruta absoluta externa válida.\n' >&2
+        exit 1
+    fi
+    if [[ "$runtime_dir" == "$lab_root" || "$runtime_dir" == "$lab_root/"* ]]; then
+        printf 'Error: LAB_RUNTIME_DIR debe estar fuera de LAB-IA.\n' >&2
+        exit 1
+    fi
+    runtime_ancestor=$runtime_dir
+    while [[ ! -e "$runtime_ancestor" ]]; do
+        runtime_ancestor=$(dirname -- "$runtime_ancestor")
+    done
+    if [[ ! -d "$runtime_ancestor" ]]; then
+        printf 'Error: LAB_RUNTIME_DIR debe ser un directorio externo válido.\n' >&2
+        exit 1
+    fi
+    runtime_source=external
+fi
+history_file="$runtime_dir/recent-workspaces"
+
 if [[ $# -eq 1 ]]; then
     requested_workspace=$1
 else
-    selector_script_path=$(realpath -e -- "${BASH_SOURCE[0]}")
-    selector_script_dir=$(dirname -- "$selector_script_path")
-    selector_lab_root=$(cd -- "$selector_script_dir/.." && pwd -P)
-    selector_history_file="$selector_lab_root/runtime/recent-workspaces"
     selectable_workspaces=()
 
-    if [[ -f "$selector_history_file" ]]; then
+    if [[ -f "$history_file" ]]; then
         while IFS= read -r previous_workspace || [[ -n "$previous_workspace" ]]; do
             [[ -d "$previous_workspace" ]] || continue
             selectable_workspaces+=("$previous_workspace")
             [[ ${#selectable_workspaces[@]} -lt 10 ]] || break
-        done < "$selector_history_file"
+        done < "$history_file"
     fi
 
     requested_workspace=''
@@ -88,9 +116,6 @@ if [[ ! -d "$workspace_path" ]]; then
 fi
 
 workspace=$(cd -- "$workspace_path" && pwd -P)
-script_path=$(realpath -e -- "${BASH_SOURCE[0]}")
-script_dir=$(dirname -- "$script_path")
-lab_root=$(cd -- "$script_dir/.." && pwd -P)
 docker_dir="$lab_root/docker"
 
 if [[ ! -f "$docker_dir/docker-compose.yml" ]]; then
@@ -140,9 +165,7 @@ fi
 printf 'Contenido de /workspace:\n'
 compose exec -T opencode ls -la /workspace
 
-runtime_dir="$lab_root/runtime"
-history_file="$runtime_dir/recent-workspaces"
-mkdir -p -- "$runtime_dir"
+(umask 077; mkdir -p -- "$runtime_dir")
 
 recent_workspaces=("$workspace")
 if [[ -f "$history_file" ]]; then
@@ -164,4 +187,8 @@ if [[ -f "$history_file" ]]; then
     done < "$history_file"
 fi
 
-printf '%s\n' "${recent_workspaces[@]}" > "$history_file"
+history_temp=$(umask 077; mktemp -- "$runtime_dir/.recent-workspaces.XXXXXXXX")
+trap 'rm -f -- "$history_temp"' EXIT
+printf '%s\n' "${recent_workspaces[@]}" > "$history_temp"
+mv -fT -- "$history_temp" "$history_file"
+trap - EXIT

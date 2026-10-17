@@ -165,3 +165,30 @@ Quedan pendientes:
 
 - Añadir mejoras adicionales al selector interactivo.
 - Evaluar una posible integración futura con una interfaz web.
+
+# Runtime privado: configuración de transición (fase 1)
+
+Backend y `scripts/lab-open` admiten `LAB_RUNTIME_DIR` en el entorno del proceso.
+Debe ser una ruta absoluta externa a la raíz de LAB-IA. Se resuelven enlaces
+simbólicos, incluso en los padres existentes de una ruta aún no creada; se
+rechazan la raíz del repositorio y sus descendientes, rutas relativas y valores
+vacíos. Ambos resolvers usan GNU `realpath -m`, disponible en el entorno Linux/WSL
+que ya utiliza el launcher. Validar la ruta no crea directorios.
+
+Sin la variable se mantiene temporalmente `<LAB-IA>/runtime` (`source: legacy`).
+Con una ruta válida se usa el directorio externo (`source: external`). El estado
+es interno: no se expone al frontend ni se usa una variable `VITE_*`. El fallback
+legacy se eliminará después de la migración real.
+
+Dentro del directorio elegido se mantienen los nombres `lab-ia.db` y
+`recent-workspaces`. Backend y launcher deben recibir el mismo entorno; la
+activación desde el backend hereda ese entorno. No es necesario modificar los
+scripts npm. El launcher crea directorios nuevos con permisos 700 solo al
+escribir, y reemplaza el historial mediante un temporal privado (600) y rename
+en el mismo directorio. No cambia permisos de directorios preexistentes.
+
+**Todavía no se ha migrado runtime. No borrar `runtime/` manualmente.** Esta fase
+no mueve ni copia SQLite o el historial y no cambia Docker, sus mounts ni el HOME
+de OpenCode. No activar una ruta externa vacía esperando encontrar los datos
+actuales: el backend conserva su comportamiento de crear una base nueva si no
+existe. La migración consistente de DB/WAL/SHM y el historial será otra fase.

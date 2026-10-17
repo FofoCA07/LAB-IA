@@ -1,3 +1,4 @@
+import { resolveRuntimePaths } from './runtime-paths.js';
 import { createTurnStore } from './turn-store.js';
 import { createSecurityStore } from './security-store.js';
 import { createAuthHandler } from './auth.js';
@@ -40,16 +41,16 @@ proposalCleanup.unref();
 const serverDir = dirname(await realpath(fileURLToPath(import.meta.url)));
 const labRoot = resolve(serverDir, '../../..');
 const agentsDir = resolve(labRoot, 'agentes/agents');
-const recentWorkspacesFile = resolve(labRoot, 'runtime/recent-workspaces');
+const runtimePaths = await resolveRuntimePaths({ labRoot });
+const recentWorkspacesFile = runtimePaths.recentWorkspacesPath;
 const labOpenPath = resolve(labRoot, 'scripts/lab-open');
 const validId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 let database;
 try {
   const { DatabaseSync } = await import('node:sqlite');
-  const runtimeDir = resolve(labRoot, 'runtime');
-  await mkdir(runtimeDir, { recursive: true });
-  database = new DatabaseSync(resolve(runtimeDir, 'lab-ia.db'));
+  await mkdir(runtimePaths.runtimeDir, { recursive: true, mode: 0o700 });
+  database = new DatabaseSync(runtimePaths.databasePath);
   database.exec(`
     PRAGMA foreign_keys = ON;
     BEGIN;
