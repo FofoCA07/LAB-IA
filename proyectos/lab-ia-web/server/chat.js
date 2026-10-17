@@ -1,10 +1,11 @@
 import { createTurnStore, isTurnId, TURN_ERROR } from './turn-store.js';
 import { generateChatReply } from './chat-ollama.js';
+import { readBoundedJson } from './security-http.js';
 
 export function createChatHandler({ database, loadAgent, json, generate = generateChatReply, turns = createTurnStore() }) {
   const generating = new Set();
   const fail = (response, status, error) => json(response, status, { error });
-  async function respond(request, response, rawId) {
+  async function respond(request, response, rawId, parsedBody) {
     response.setHeader('Cache-Control', 'no-store');
     if (request.method !== 'POST') {
       response.setHeader('Allow', 'POST');
@@ -25,21 +26,10 @@ export function createChatHandler({ database, loadAgent, json, generate = genera
     const id = Number(rawId);
     if (generating.has(id) || turns.findActive(id)) return fail(response, 409, 'Ya se está generando una respuesta.');
     generating.add(id);
-    let timer;
     let turn;
     try {
-      const body = await Promise.race([(async () => {
-        const chunks = []; let size = 0;
-        for await (const chunk of request) {
-          size += chunk.length;
-          if (size > 1024) throw new Error();
-          chunks.push(chunk);
-        }
-        return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
-      })(), new Promise((_, reject) => {
-        timer = setTimeout(() => { request.destroy(); reject(new Error()); }, 5000);
-      })]).catch(() => null);
-      clearTimeout(timer);
+      const body = parsedBody === undefined
+        ? await readBoundedJson(request).catch(() => null) : parsedBody;
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 0) {
         return fail(response, 400, 'La solicitud debe contener únicamente {}.');
       }
@@ -86,7 +76,6 @@ export function createChatHandler({ database, loadAgent, json, generate = genera
       }
       return fail(response, 502, TURN_ERROR.message);
     } finally {
-      clearTimeout(timer);
       generating.delete(id);
     }
   }

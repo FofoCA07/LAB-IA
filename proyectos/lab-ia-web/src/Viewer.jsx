@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './Viewer.css';
+import { createLabApi } from './lab-api';
 
 function agentName(id) {
   return id.split('-').map((word) => word === 'sql' ? 'SQL' : word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
@@ -13,13 +14,9 @@ function conversationTitle(content) {
   return boundary > 0 ? title.slice(0, boundary) : title.trimEnd();
 }
 
-async function postConversation(path, body, failureMessage) {
+async function postConversation(api, path, body, failureMessage) {
   try {
-    const response = await fetch(`/api/lab/api/conversations${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const response = await api.privatePost(`/api/lab/api/conversations${path}`, body);
     if (!response.ok) throw new Error();
     const data = await response.json();
     if (!Number.isSafeInteger(data?.id) || data.id <= 0) throw new Error();
@@ -50,7 +47,8 @@ function validProposalId(value) {
     && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }
 
-function Viewer({ activeSection, onSelectSection }) {
+function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired }) {
+  const api = useMemo(() => createLabApi(csrfToken, onSessionExpired), [csrfToken, onSessionExpired]);
   const [openCode, setOpenCode] = useState(null);
   const [openCodeLoading, setOpenCodeLoading] = useState(true);
   const [openCodeError, setOpenCodeError] = useState('');
@@ -145,7 +143,7 @@ function Viewer({ activeSection, onSelectSection }) {
     const controller = new AbortController();
     async function loadAgents() {
       try {
-        const response = await fetch('/api/lab/api/agents', { signal: controller.signal });
+        const response = await api.privateGet('/api/lab/api/agents', { signal: controller.signal });
         if (!response.ok) throw new Error();
         const data = await response.json();
         if (!Array.isArray(data) || !data.every((agent) =>
@@ -160,14 +158,14 @@ function Viewer({ activeSection, onSelectSection }) {
     }
     void loadAgents();
     return () => controller.abort();
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     if (loadedAgent?.id === activeAgentId) return;
     const controller = new AbortController();
     async function loadAgent() {
       try {
-        const response = await fetch(`/api/lab/api/agents/${encodeURIComponent(activeAgentId)}`, { signal: controller.signal });
+        const response = await api.privateGet(`/api/lab/api/agents/${encodeURIComponent(activeAgentId)}`, { signal: controller.signal });
         if (!response.ok) throw new Error();
         const data = await response.json();
         if (data.id !== activeAgentId || typeof data.content !== 'string' || !data.content.trim()) throw new Error();
@@ -180,7 +178,7 @@ function Viewer({ activeSection, onSelectSection }) {
     }
     void loadAgent();
     return () => controller.abort();
-  }, [activeAgentId, loadedAgent?.id]);
+  }, [activeAgentId, loadedAgent?.id, api]);
 
   useEffect(() => {
     if (activeSection !== 'Historial') return;
@@ -189,7 +187,7 @@ function Viewer({ activeSection, onSelectSection }) {
       setHistoryLoading(true);
       setHistoryError('');
       try {
-        const response = await fetch('/api/lab/api/conversations', { signal: controller.signal });
+        const response = await api.privateGet('/api/lab/api/conversations', { signal: controller.signal });
         if (!response.ok) throw new Error();
         const data = await response.json();
         if (!Array.isArray(data) || !data.every(validConversation)) throw new Error();
@@ -202,7 +200,7 @@ function Viewer({ activeSection, onSelectSection }) {
     }
     void loadHistory();
     return () => controller.abort();
-  }, [activeSection, isLoading]);
+  }, [activeSection, isLoading, api]);
 
   useEffect(() => () => openingRequest.current?.abort(), [activeSection]);
 
@@ -524,7 +522,7 @@ function Viewer({ activeSection, onSelectSection }) {
     setOpeningId(id);
     setOpenError('');
     try {
-      const response = await fetch(`/api/lab/api/conversations/${id}`, { signal: controller.signal });
+      const response = await api.privateGet(`/api/lab/api/conversations/${id}`, { signal: controller.signal });
       if (!response.ok) throw new Error('No se pudo recuperar la conversación.');
       const data = await response.json();
       if (!validConversation(data?.conversation) || data.conversation.id !== id
@@ -536,7 +534,7 @@ function Viewer({ activeSection, onSelectSection }) {
         throw new Error('La conversación contiene datos no válidos.');
       }
       const agentId = data.conversation.agente_id;
-      const agentResponse = await fetch(`/api/lab/api/agents/${encodeURIComponent(agentId)}`, { signal: controller.signal });
+      const agentResponse = await api.privateGet(`/api/lab/api/agents/${encodeURIComponent(agentId)}`, { signal: controller.signal });
       if (!agentResponse.ok) {
         throw new Error(agentResponse.status === 404
           ? 'El agente de esta conversación ya no existe. No se abrió la conversación.'
@@ -600,7 +598,7 @@ function Viewer({ activeSection, onSelectSection }) {
     try {
       let activeConversationId = conversationId;
       if (activeConversationId === null) {
-        const conversation = await postConversation('', {
+        const conversation = await postConversation(api, '', {
           titulo: conversationTitle(content),
           agente_id: activeAgentId,
           modelo: 'qwen3:8b',
@@ -609,18 +607,14 @@ function Viewer({ activeSection, onSelectSection }) {
         activeConversationId = conversation.id;
         setConversationId(activeConversationId);
       }
-      await postConversation(`/${activeConversationId}/messages`, {
+      await postConversation(api, `/${activeConversationId}/messages`, {
         content,
       }, 'No se pudo guardar tu mensaje. No se ha enviado a Ollama.');
       userSaved = true;
       setMessages(nextMessages);
       setDraft('');
 
-      const response = await fetch(`/api/lab/api/conversations/${activeConversationId}/respond`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
+      const response = await api.privatePost(`/api/lab/api/conversations/${activeConversationId}/respond`, {});
       if (!response.ok) throw new Error('No se pudo generar o guardar la respuesta.');
       const data = await response.json().catch(() => {
         throw new Error('El servidor no devolvió una respuesta válida.');

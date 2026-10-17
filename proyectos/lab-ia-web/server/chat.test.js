@@ -168,7 +168,7 @@ test('Viewer sends only empty response body, never calls Ollama or persists gene
   const send = source.slice(source.indexOf('  async function sendMessage()'), source.indexOf('  function handleMessageKeyDown'));
   assert.equal(source.includes('/api/ollama/api/chat'), false);
   assert.match(send, /\/api\/lab\/api\/conversations\/\$\{activeConversationId\}\/respond/);
-  assert.match(send, /body: JSON.stringify\(\{\}\)/);
+  assert.match(send, /api\.privatePost\(`[^`]+\/respond`, \{\}\)/);
   assert.doesNotMatch(send, /role: 'system'|loadedAgent.content|rol: 'assistant'/);
   assert.match(send, /setMessages\(\[\.\.\.nextMessages, \{ role: 'assistant', content: data.message.content \}\]\)/);
 });
@@ -253,11 +253,13 @@ test('public message cannot mutate history while respond is generating', async t
 test('public route uses restricted handler and Viewer sends content-only message body', async () => {
   const server = await readFile(new URL('./index.js', import.meta.url), 'utf8');
   assert.match(server, /const addUserMessage = createPublicMessageHandler\(\{ database, chat, json \}\)/);
-  const route = server.slice(server.indexOf('async function conversations'), server.indexOf('const changeProposal ='));
+  const routes = await readFile(new URL('./chat-routes.js', import.meta.url), 'utf8');
+  const route = routes.slice(routes.indexOf('async function conversations'), routes.indexOf('async function agents'));
+  assert.match(server, /if \(await privateChat\(request, response\)\) return/);
   assert.match(route, /addUserMessage\(body, response, id\)/);
   assert.doesNotMatch(route, /INSERT INTO mensajes/);
   const viewer = await readFile(new URL('../src/Viewer.jsx', import.meta.url), 'utf8');
-  assert.match(viewer, /postConversation\(`\/\$\{activeConversationId\}\/messages`, \{\s*content,\s*\}/);
+  assert.match(viewer, /postConversation\(api, `\/\$\{activeConversationId\}\/messages`, \{\s*content,\s*\}/);
 });
 
 

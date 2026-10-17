@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Pairing from './Pairing';
 import { getSession, logout } from './auth';
 import Header from './Header';
@@ -27,6 +27,11 @@ function App() {
       }
     });
     return () => { active = false; };
+  }, []);
+
+  const invalidateSession = useCallback(() => {
+    setAuthError('');
+    setAuth({ status: 'unauthenticated', csrfToken: null });
   }, []);
 
   async function completePairing() {
@@ -68,7 +73,8 @@ function App() {
       <div className="main-content">
         <Sidebar activeSection={activeSection} onSelectSection={setActiveSection} />
         <div className="app-viewer" hidden={activeSection === 'Acciones'}>
-          <Viewer activeSection={activeSection} onSelectSection={setActiveSection} />
+          <Viewer activeSection={activeSection} onSelectSection={setActiveSection}
+            csrfToken={auth.csrfToken} onSessionExpired={invalidateSession} />
         </div>
         {activeSection === 'Acciones' && <Actions />}
       </div>

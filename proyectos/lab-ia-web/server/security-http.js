@@ -5,7 +5,7 @@ export const authOrigins = Object.freeze([
   'http://127.0.0.1:5173',
 ]);
 
-export function createRequestValidator(origins = authOrigins) {
+export function createRequestValidator(origins = authOrigins, { requireIntent = true } = {}) {
   const allowed = new Map(origins.map(origin => {
     const url = new URL(origin);
     if (url.origin !== origin || !['http:', 'https:'].includes(url.protocol)
@@ -20,7 +20,7 @@ export function createRequestValidator(origins = authOrigins) {
     // This header is not authentication: the session still grants authority.
     if (request.method === 'GET') {
       return (origin === undefined || origin === expected)
-        && request.headers['x-lab-request'] === '1'
+        && (!requireIntent || request.headers['x-lab-request'] === '1')
         && (request.headers['sec-fetch-site'] === undefined || request.headers['sec-fetch-site'] === 'same-origin');
     }
     return origin === expected
@@ -84,4 +84,20 @@ export function sessionCookie(sessionId, maxAge) {
 
 export function requireCsrf(store, request) {
   return store.validateCsrf(readSessionCookie(request), request.headers['x-lab-csrf']);
+}
+
+// The Chat boundary accepts fixed backend hosts too, with identical session checks.
+// Transport validation precedes session lookup; intent/CSRF follow authentication.
+export function createSessionGuard(store, origins = [...authOrigins,
+  'http://localhost:3001', 'http://127.0.0.1:3001']) {
+  const validTransport = createRequestValidator(origins, { requireIntent: false });
+  return request => {
+    if (!validTransport(request)) throw new AuthRequestError(403);
+    const id = readSessionCookie(request);
+    if (!store.getSession(id, { touch: false })) throw new AuthRequestError(401);
+    if (request.method === 'GET') {
+      if (request.headers['x-lab-request'] !== '1') throw new AuthRequestError(403);
+    } else if (!requireCsrf(store, request)) throw new AuthRequestError(403);
+    store.getSession(id); // Only accepted requests extend inactivity timeout.
+  };
 }
