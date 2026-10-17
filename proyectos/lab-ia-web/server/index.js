@@ -2,6 +2,7 @@ import { createTurnStore } from './turn-store.js';
 import { createSecurityStore } from './security-store.js';
 import { createAuthHandler } from './auth.js';
 import { createPrivateChatRoutes } from './chat-routes.js';
+import { createPrivateWorkspaceRoutes } from './workspace-routes.js';
 import { attachPairingTerminal } from './pairing-terminal.js';
 import { createPublicMessageHandler } from './conversation-messages.js';
 import { createChatHandler } from './chat.js';
@@ -37,8 +38,6 @@ const labRoot = resolve(serverDir, '../../..');
 const agentsDir = resolve(labRoot, 'agentes/agents');
 const recentWorkspacesFile = resolve(labRoot, 'runtime/recent-workspaces');
 const labOpenPath = resolve(labRoot, 'scripts/lab-open');
-let activationInProgress = false;
-let summaryInProgress = false;
 const validId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 let database;
@@ -91,40 +90,6 @@ async function checkAgentsDir() {
   }
 }
 
-
-async function workspaces(request, response) {
-  if (request.method !== 'GET') {
-    response.setHeader('Allow', 'GET');
-    json(response, 405, { error: 'Método no permitido.' });
-    return;
-  }
-  try {
-    let content;
-    try {
-      content = await readFile(recentWorkspacesFile, 'utf8');
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-      json(response, 200, []);
-      return;
-    }
-    const paths = [...new Set(content.split(/\r?\n/)
-      .filter((path) => posix.isAbsolute(path) && !/[\x00-\x1f\x7f]/.test(path)))];
-    const result = await Promise.all(paths.map(async (path) => {
-      let exists = true;
-      try {
-        await stat(path);
-      } catch (error) {
-        if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
-        exists = false;
-      }
-      return { path, type: /^\/mnt\/[a-z](?:\/|$)/i.test(path) ? 'windows' : 'wsl', exists };
-    }));
-    json(response, 200, result);
-  } catch {
-    json(response, 500, { error: 'No se pudieron consultar los workspaces recientes.' });
-  }
-}
-
 function inspectOpenCode() {
   return new Promise((resolveResult, reject) => {
     execFile('docker', ['inspect', '--type', 'container', 'opencode'], {
@@ -151,25 +116,6 @@ function inspectOpenCode() {
   });
 }
 
-async function activeWorkspace(request, response) {
-  response.setHeader('Cache-Control', 'no-store');
-  if (request.method !== 'GET') {
-    response.setHeader('Allow', 'GET');
-    json(response, 405, { error: 'Método no permitido.' });
-    return;
-  }
-  if (request.url.includes('?') || request.headers['transfer-encoding']
-    || (request.headers['content-length'] && request.headers['content-length'] !== '0')) {
-    json(response, 400, { error: 'Este endpoint no acepta parámetros ni cuerpo.' });
-    return;
-  }
-  try {
-    json(response, 200, await inspectOpenCode());
-  } catch {
-    json(response, 500, { error: 'No se pudo consultar Docker para determinar el workspace activo.' });
-  }
-}
-
 // Fixed, read-only Docker operations; no client input enters these arguments.
 function queryOpenCode(args) {
   return new Promise((resolveResult, reject) => {
@@ -184,25 +130,6 @@ function queryOpenCode(args) {
       } else resolveResult(stdout.trim());
     });
   });
-}
-
-async function openCodeStatus(request, response) {
-  response.setHeader('Cache-Control', 'no-store');
-  if (request.method !== 'GET') {
-    response.setHeader('Allow', 'GET');
-    json(response, 405, { error: 'Método no permitido.' });
-    return;
-  }
-  if (request.url.includes('?') || request.headers['transfer-encoding']
-    || (request.headers['content-length'] && request.headers['content-length'] !== '0')) {
-    json(response, 400, { error: 'Este endpoint no acepta parámetros ni cuerpo.' });
-    return;
-  }
-  try {
-    json(response, 200, await getOpenCodeStatus());
-  } catch {
-    json(response, 500, { error: 'No se pudo consultar el estado de OpenCode.' });
-  }
 }
 
 async function getOpenCodeStatus({ checkCLI = true } = {}) {
@@ -395,92 +322,6 @@ function runWorkspaceSummary(snapshot) {
   });
 }
 
-async function workspaceSummary(request, response) {
-  response.setHeader('Cache-Control', 'no-store');
-  if (request.method !== 'POST') {
-    response.setHeader('Allow', 'POST');
-    json(response, 405, { success: false, error: 'Método no permitido.' });
-    return;
-  }
-  if (request.url.includes('?') || request.headers['transfer-encoding']
-    || (request.headers['content-length'] && request.headers['content-length'] !== '0')) {
-    json(response, 400, { success: false, error: 'Este endpoint solo acepta cuerpo vacío y ningún parámetro.' });
-    return;
-  }
-  if (request.headers.origin) {
-    let origin;
-    try { origin = new URL(request.headers.origin); } catch { /* Reject invalid origins below. */ }
-    if (!origin || !['http:', 'https:'].includes(origin.protocol) || origin.host !== request.headers.host) {
-      json(response, 403, { success: false, error: 'Origen no permitido.' });
-      return;
-    }
-  }
-  if (summaryInProgress) {
-    json(response, 409, { success: false, error: 'Ya hay un análisis de OpenCode en curso.' });
-    return;
-  }
-  summaryInProgress = true;
-  let releaseDelay = 0;
-  let startedAt;
-  try {
-    const status = await getOpenCodeStatus();
-    const unavailable = !status.available ? 'El contenedor OpenCode no existe.'
-      : !status.running ? 'El contenedor OpenCode está detenido.'
-        : !status.workspace ? 'OpenCode no tiene un montaje en /workspace.'
-          : !status.cliAvailable ? 'La CLI de OpenCode no está disponible.' : null;
-    if (unavailable) {
-      json(response, 503, { success: false, error: unavailable });
-      return;
-    }
-    // Fail closed if Reviewer was removed or its read-only tools policy changed.
-    const agent = JSON.parse(await queryOpenCode(['exec', '--env', workspaceSummaryConfig,
-      '--workdir', '/workspace', 'opencode',
-      'opencode', '--pure', 'debug', 'agent', 'reviewer']));
-    const action = (name) => agent.permission?.filter((rule) =>
-      (rule.permission === name || rule.permission === '*') && rule.pattern === '*').at(-1)?.action;
-    const blanketDenyIndex = Array.isArray(agent.permission) ? agent.permission.findLastIndex((rule) =>
-      rule.permission === '*' && rule.pattern === '*' && rule.action === 'deny') : -1;
-    if (agent.name !== 'reviewer' || agent.mode !== 'primary'
-      || !Array.isArray(agent.permission) || !agent.tools
-      || typeof agent.tools !== 'object' || Array.isArray(agent.tools)
-      || Object.keys(agent.tools).length === 0
-      || Object.values(agent.tools).some((enabled) => enabled !== false)
-      || blanketDenyIndex < 0
-      // OpenCode may append external_directory access to its truncation directory.
-      // That is a permission for paths, not a tool; no later tool exception is allowed.
-      || agent.permission.slice(blanketDenyIndex + 1).some((rule) =>
-        rule.action !== 'deny' && rule.permission !== 'external_directory')
-      || agent.permission.some((rule) => ['edit', 'write', 'bash', 'task'].includes(rule.permission)
-        && rule.action === 'allow')
-      || agent.tools?.edit !== false || agent.tools?.write !== false || agent.tools?.task !== false
-      || action('edit') !== 'deny' || action('bash') !== 'deny'
-      || action('task') !== 'deny') {
-      json(response, 503, { success: false, error: 'No se pudo confirmar que Reviewer tenga todas las herramientas deshabilitadas.' });
-      return;
-    }
-    const snapshot = await inspectWorkspaceSnapshot(status.workspace);
-    startedAt = Date.now();
-    const result = await runWorkspaceSummary(snapshot);
-    json(response, 200, { success: true, workspace: status.workspace, agent: 'reviewer', summary: result });
-  } catch (error) {
-    if (error.retainLock && startedAt) releaseDelay = Math.max(0, 120_000 - (Date.now() - startedAt));
-    json(response, error.timedOut ? 504 : 502, { success: false, error: error.timedOut
-      ? 'El análisis de OpenCode excedió el tiempo máximo.'
-      : error.inspectionFailed ? 'No se pudo inspeccionar el workspace de forma segura.'
-        : error.invalidSummary ? 'OpenCode no devolvió el resumen en el formato esperado.'
-        : 'No se pudo completar el análisis de OpenCode con una respuesta válida.' });
-  } finally {
-    if (releaseDelay) setTimeout(() => { summaryInProgress = false; }, releaseDelay).unref();
-    else summaryInProgress = false;
-  }
-}
-
-function validActivationPath(path) {
-  return typeof path === 'string' && path.trim().length > 0
-    && posix.isAbsolute(path) && !/[\x00-\x1f\x7f]/.test(path)
-    && !path.split('/').includes('..');
-}
-
 function runLabOpen(workspacePath) {
   return new Promise((resolveResult, reject) => {
     const child = spawn(labOpenPath, [workspacePath], {
@@ -504,92 +345,6 @@ function runLabOpen(workspacePath) {
     });
   });
 }
-
-async function activateWorkspace(request, response) {
-  if (request.method !== 'POST') {
-    response.setHeader('Allow', 'POST');
-    json(response, 405, { success: false, error: 'Método no permitido.' });
-    return;
-  }
-  // Require JSON and reject cross-origin browser requests to this local executor.
-  if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
-    json(response, 415, { success: false, error: 'Se requiere application/json.' });
-    return;
-  }
-  if (request.headers.origin) {
-    let origin;
-    try { origin = new URL(request.headers.origin); } catch { /* Invalid origin is rejected below. */ }
-    if (!origin || !['http:', 'https:'].includes(origin.protocol) || origin.host !== request.headers.host) {
-      json(response, 403, { success: false, error: 'Origen no permitido.' });
-      return;
-    }
-  }
-  if (activationInProgress) {
-    json(response, 409, { success: false, error: 'Ya hay una activación de workspace en curso.' });
-    return;
-  }
-  const releaseProposalLock = proposalLocks.acquireExclusive();
-  if (!releaseProposalLock) {
-    json(response, 409, { success: false, error: 'El workspace está ocupado.' }); return;
-  }
-  activationInProgress = true;
-  try {
-    let body;
-    try {
-      const chunks = [];
-      let size = 0;
-      for await (const chunk of request) {
-        size += chunk.length;
-        if (size > 16_384) {
-          json(response, 413, { success: false, error: 'Solicitud demasiado grande.' });
-          return;
-        }
-        chunks.push(chunk);
-      }
-      body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    } catch {
-      json(response, 400, { success: false, error: 'JSON no válido.' });
-      return;
-    }
-    if (!body || typeof body !== 'object' || Array.isArray(body)
-      || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'path')
-      || !validActivationPath(body.path)) {
-      json(response, 400, { success: false, error: 'Ruta de workspace no válida.' });
-      return;
-    }
-    let content;
-    try { content = await readFile(recentWorkspacesFile, 'utf8'); } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-      content = '';
-    }
-    if (!content.split(/\r?\n/).filter(validActivationPath).includes(body.path)) {
-      json(response, 403, { success: false, error: 'El workspace no pertenece al historial reciente actual.' });
-      return;
-    }
-    let directory;
-    try { directory = await stat(body.path); } catch (error) {
-      if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
-    }
-    if (!directory?.isDirectory()) {
-      json(response, 400, { success: false, error: 'El workspace no existe o no es un directorio.' });
-      return;
-    }
-    try {
-      await runLabOpen(body.path);
-    } catch (error) {
-      json(response, 500, { success: false, error: error.code === 'ACTIVATION_TIMEOUT'
-        ? 'La activación excedió el tiempo máximo de 120 segundos.' : 'No se pudo activar el workspace.' });
-      return;
-    }
-    json(response, 200, { success: true, workspace: body.path });
-  } catch {
-    json(response, 500, { success: false, error: 'No se pudo activar el workspace.' });
-  } finally {
-    activationInProgress = false;
-    releaseProposalLock();
-  }
-}
-
 
 const changeProposal = createChangeProposalHandler({ store: proposalStore, locks: proposalLocks, waitForWarmup: (deadline) => waitForOllamaWarmup(ollamaWarmup, deadline), getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }), json });
 
@@ -618,9 +373,17 @@ const privateChat = createPrivateChatRoutes({ store: securityStore, database, ch
     .sort((a, b) => a.filename.localeCompare(b.filename)),
 });
 
+const privateWorkspaces = createPrivateWorkspaceRoutes({ securityStore, json,
+  readRecentWorkspaces: () => readFile(recentWorkspacesFile, 'utf8'), stat,
+  inspectOpenCode, getOpenCodeStatus, queryOpenCode, workspaceSummaryConfig,
+  inspectWorkspaceSnapshot, runWorkspaceSummary, runLabOpen,
+  acquireActivationLock: () => proposalLocks.acquireExclusive(),
+});
+
 const server = createServer(async (request, response) => {
   if (await auth(request, response)) return;
   if (await privateChat(request, response)) return;
+  if (await privateWorkspaces(request, response)) return;
   // Validate the raw path, without URL normalization that could hide traversal.
   const path = (request.url ?? '').split('?')[0];
   if (path === '/api/actions') {
@@ -634,26 +397,6 @@ const server = createServer(async (request, response) => {
   }
   if (path === '/api/opencode/change-proposal') {
     await changeProposal(request, response);
-    return;
-  }
-  if (path === '/api/opencode/workspace-summary') {
-    await workspaceSummary(request, response);
-    return;
-  }
-  if (path === '/api/opencode/status') {
-    await openCodeStatus(request, response);
-    return;
-  }
-  if (path === '/api/workspaces/active') {
-    await activeWorkspace(request, response);
-    return;
-  }
-  if (path === '/api/workspaces/activate') {
-    await activateWorkspace(request, response);
-    return;
-  }
-  if (path === '/api/workspaces') {
-    await workspaces(request, response);
     return;
   }
   json(response, 404, { error: 'Endpoint no encontrado.' });

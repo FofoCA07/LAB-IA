@@ -120,8 +120,8 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
       setOpenCodeError('');
       setOpenCode(null);
       try {
-        const response = await fetch('/api/lab/api/opencode/status', {
-          signal: controller.signal, cache: 'no-store',
+        const response = await api.privateGet('/api/lab/api/opencode/status', {
+          signal: controller.signal,
         });
         if (!response.ok) throw new Error();
         const data = await response.json();
@@ -137,7 +137,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
     }
     void loadOpenCode();
     return () => controller.abort();
-  }, [activeSection]);
+  }, [activeSection, api]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -211,7 +211,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
       setWorkspacesLoading(true);
       setWorkspacesError('');
       try {
-        const response = await fetch('/api/lab/api/workspaces', { signal: controller.signal });
+        const response = await api.privateGet('/api/lab/api/workspaces', { signal: controller.signal });
         if (!response.ok) throw new Error();
         const data = await response.json();
         if (!Array.isArray(data) || !data.every((workspace) =>
@@ -227,7 +227,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
     }
     void loadWorkspaces();
     return () => controller.abort();
-  }, [activeSection]);
+  }, [activeSection, api]);
 
   const loadActiveWorkspace = useCallback(async (signal) => {
     const requestId = ++activeWorkspaceRequest.current;
@@ -236,7 +236,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
     setActiveWorkspace(null);
     setInfrastructure(null);
     try {
-      const response = await fetch('/api/lab/api/workspaces/active', { signal, cache: 'no-store' });
+      const response = await api.privateGet('/api/lab/api/workspaces/active', { signal });
       if (!response.ok) throw new Error();
       const data = await response.json();
       if (!data || typeof data.active !== 'boolean' || typeof data.running !== 'boolean'
@@ -255,7 +255,7 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
     } finally {
       if (!signal?.aborted && requestId === activeWorkspaceRequest.current) setActiveWorkspaceLoading(false);
     }
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     if (activeSection !== 'Proyectos') return;
@@ -271,8 +271,10 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
     setSummaryError('');
     setWorkspaceSummary(null);
     try {
-      const response = await fetch('/api/lab/api/opencode/workspace-summary', { method: 'POST' });
-      const data = await response.json();
+      const response = await api.privatePost('/api/lab/api/opencode/workspace-summary', {});
+      const data = await response.json().catch(() => {
+        throw new Error('El servidor no devolvió una respuesta válida.');
+      });
       if (!response.ok) {
         throw new Error(response.status === 409 ? 'Ya hay un análisis de OpenCode en curso.'
           : response.status === 504 ? 'El análisis de OpenCode excedió el tiempo máximo.'
@@ -309,12 +311,10 @@ function Viewer({ activeSection, onSelectSection, csrfToken, onSessionExpired })
     setActivationError('');
     let infrastructureConfirmed = false;
     try {
-      const response = await fetch('/api/lab/api/workspaces/activate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
+      const response = await api.privatePost('/api/lab/api/workspaces/activate', { path });
+      const data = await response.json().catch(() => {
+        throw new Error('El servidor no devolvió una respuesta válida.');
       });
-      const data = await response.json();
       if (!response.ok) {
         throw new Error(response.status === 409 ? 'Ya hay una activación de workspace en curso.'
           : 'No se pudo activar el workspace. Comprueba que siga disponible en el historial reciente.');

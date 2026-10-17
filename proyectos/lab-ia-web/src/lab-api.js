@@ -14,7 +14,11 @@ export function createLabApi(csrfToken, onSessionExpired) {
     const isChat = /^\/api\/lab\/api\/(?:agents(?:\/[^/?]+)?|conversations(?:\/[^/?]+(?:\/messages|\/respond|\/turns\/[^/?]+)?)?)$/.test(path);
     const isActions = (method === 'GET' && path === '/api/lab/api/actions')
       || (method === 'POST' && path === '/api/lab/api/actions/decision');
-    if (!isChat && !isActions) {
+    const isWorkspace = (method === 'GET' && ['/api/lab/api/workspaces',
+      '/api/lab/api/workspaces/active', '/api/lab/api/opencode/status'].includes(path))
+      || (method === 'POST' && ['/api/lab/api/workspaces/activate',
+        '/api/lab/api/opencode/workspace-summary'].includes(path));
+    if (!isChat && !isActions && !isWorkspace) {
       throw new Error('Solicitud privada no válida.');
     }
     let response;
