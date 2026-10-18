@@ -4,7 +4,7 @@ LAB-IA puede trabajar sobre proyectos externos almacenados en WSL o Windows sin 
 
 # Cómo funciona
 
-LAB-IA mantiene sus agentes y configuración dentro de `/home/adolf/LAB-IA`. El proyecto externo se monta como `/workspace` dentro del contenedor OpenCode; los cambios realizados allí afectan los archivos del proyecto original.
+LAB-IA mantiene sus agentes y configuración dentro de `/home/adolf/LAB-IA`. El proyecto externo se monta como `/workspace:ro` dentro del contenedor OpenCode principal. OpenCode puede leerlo y analizarlo, pero no modificar sus archivos.
 
 La variable `LAB_WORKSPACE` controla qué proyecto se monta. Si no se define o está vacía, Compose usa `../` desde el directorio `docker`, manteniendo LAB-IA como workspace predeterminado.
 
@@ -86,9 +86,9 @@ Se guarda en `<directorio de estado>/recent-workspaces`, fuera del repositorio. 
   LAB_WORKSPACE="<ruta>" docker compose up -d --force-recreate opencode
   ```
 
-- Monta el proyecto como `/workspace`.
+- Monta el proyecto como `/workspace:ro`.
 - Verifica que OpenCode esté en estado `running`.
-- Comprueba que el workspace montado coincida con la ruta real solicitada.
+- Comprueba mediante Docker inspect que el workspace montado coincida con la ruta real solicitada y que `.RW` sea exactamente `false`. Si falta metadata o aparece RW, aborta antes de listar el proyecto o actualizar el historial.
 - Informa el workspace solicitado, el resuelto, el montado y el estado de OpenCode.
 - Muestra el contenido de `/workspace` mediante `ls -la`, un comando de solo lectura.
 
@@ -115,7 +115,7 @@ lab-open "/mnt/c/Users/adolf/Documents/Mi Proyecto"
 1. Ejecutar `lab-open` sin argumentos y elegir un workspace del historial o escribir otra ruta.
 2. Como alternativa, proporcionar una ruta directamente: `lab-open /home/adolf/proyectos/MiProyecto`. Si vive en Windows, usar su ruta absoluta entre comillas simples o su equivalente en `/mnt/...`.
 3. Comprobar que el workspace montado sea el esperado y OpenCode esté en estado `running`.
-4. Abrir OpenCode y trabajar normalmente sobre `/workspace`.
+4. Abrir OpenCode para leer y analizar `/workspace`; las escrituras sobre el proyecto están bloqueadas por el filesystem.
 
 # Consideraciones
 
@@ -201,11 +201,35 @@ cambian.
 El HOME de OpenCode es independiente: Compose monta
 `${HOME}/.local/share/lab-ia-opencode/home` en `/home/adolf`. No debe incluir
 `lab-ia.db` ni `recent-workspaces` del backend. Los mounts de agentes y
-configuración siguen siendo read-only; el workspace todavía conserva su modo
-actual. Esta fase no recrea contenedores ni ejecuta modelos.
+configuración siguen siendo read-only; el workspace es read-only y el HOME
+externo permanece read-write. El estado privado de LAB-IA no se monta en OpenCode. Esta fase no recrea contenedores ni ejecuta modelos.
 
-**`<LAB-IA>/runtime` ya no es fallback.** La carpeta legacy puede seguir existiendo
-durante la verificación y el cutover. No borrarla manualmente hasta terminar las
-validaciones y comprobar los backups. Su existencia todavía deja visibles sus
-datos si se monta la raíz completa de LAB-IA como workspace; este cambio evita
-recrearla, pero no la elimina.
+**`<LAB-IA>/runtime` ya no es fallback ni una dependencia del workspace.** El estado
+privado se ha separado físicamente del repositorio. No borrar backups. Cualquier
+copia legacy que se reintroduzca dentro del proyecto volvería a ser legible
+aunque el mount sea RO.
+
+
+# Workspace de solo lectura (fase 3)
+
+El contenedor principal es un lector: sus herramientas `edit` o `bash` deben
+fallar por filesystem read-only cuando intenten escribir en `/workspace`. Puede
+seguir usando su HOME externo RW para estado, logs y cachés. No se cambia la
+imagen, el usuario 1000:1000, la red ni el root filesystem.
+
+Chat y los permisos read trabajan desde el backend. Workspace summary construye
+su snapshot en el host y lo entrega a OpenCode con las herramientas de Reviewer
+deshabilitadas. Proposal selecciona/lee archivos y genera el diff desde el
+backend; no requiere escritura del contenedor. Apply sigue ejecutando Git desde
+el backend host, con sus validaciones, índice temporal y single-use existentes:
+el RO del contenedor no impide ese circuito autorizado.
+
+Una autorización nunca debe elevar el contenedor lector a RW. La futura
+escritura de agentes requerirá un ejecutor separado y temporal; no existe uno en
+esta fase. Los locks y errores seguros de activación se mantienen. La comprobación
+RO ocurre después de la recreación: si falla no registra éxito ni actualiza el
+historial, pero no intenta revertir ni modificar mounts automáticamente.
+
+Editar Compose no altera un contenedor ya existente. El nuevo mount se aplicará
+en una recreación futura autorizada; las validaciones de esta fase no recrean
+el contenedor ni prueban OpenCode real.

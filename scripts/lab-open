@@ -149,6 +149,7 @@ fi
 
 state=$(docker inspect --format '{{.State.Status}}' "$container_id")
 mounted_workspace=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "$container_id")
+workspace_rw=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.RW}}{{end}}{{end}}' "$container_id")
 
 printf 'Workspace montado: %s\n' "${mounted_workspace:-no encontrado}"
 printf 'Estado de OpenCode: %s\n' "$state"
@@ -160,6 +161,12 @@ fi
 
 if [[ "$mounted_workspace" != "$workspace" ]]; then
     printf 'Error: el montaje de /workspace no coincide con el proyecto solicitado.\n' >&2
+    exit 1
+fi
+
+# Require an explicit Docker boolean; missing/ambiguous metadata fails closed.
+if [[ "$workspace_rw" != false ]]; then
+    printf 'Error: el montaje de /workspace debe ser de solo lectura.\n' >&2
     exit 1
 fi
 
