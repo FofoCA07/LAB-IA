@@ -17,32 +17,33 @@ fi
 script_path=$(realpath -e -- "${BASH_SOURCE[0]}")
 script_dir=$(dirname -- "$script_path")
 lab_root=$(cd -- "$script_dir/.." && pwd -P)
-runtime_source=legacy
-# Transitional fallback only: remove after the real runtime migration.
-runtime_dir="$lab_root/runtime"
+runtime_source=xdg-default
+runtime_error() {
+    printf 'Error: configuración del runtime externo no válida.\n' >&2
+    exit 1
+}
 if [[ ${LAB_RUNTIME_DIR+x} ]]; then
-    if [[ "$LAB_RUNTIME_DIR" != /* || "$LAB_RUNTIME_DIR" == *[$'\001'-$'\037'$'\177']* ]]; then
-        printf 'Error: LAB_RUNTIME_DIR debe ser una ruta absoluta externa válida.\n' >&2
-        exit 1
+    runtime_candidate=$LAB_RUNTIME_DIR
+    runtime_source=env
+else
+    [[ "${HOME:-}" == /* && -d "${HOME:-}" ]] || runtime_error
+    [[ "$HOME" != *[$'\001'-$'\037'$'\177']* ]] || runtime_error
+    if [[ -n "${XDG_STATE_HOME:-}" ]]; then
+        [[ "$XDG_STATE_HOME" == /* ]] || runtime_error
+        runtime_candidate="$XDG_STATE_HOME/lab-ia"
+    else
+        runtime_candidate="$HOME/.local/state/lab-ia"
     fi
-    if ! runtime_dir=$(realpath -m -- "$LAB_RUNTIME_DIR" 2>/dev/null); then
-        printf 'Error: LAB_RUNTIME_DIR debe ser una ruta absoluta externa válida.\n' >&2
-        exit 1
-    fi
-    if [[ "$runtime_dir" == "$lab_root" || "$runtime_dir" == "$lab_root/"* ]]; then
-        printf 'Error: LAB_RUNTIME_DIR debe estar fuera de LAB-IA.\n' >&2
-        exit 1
-    fi
-    runtime_ancestor=$runtime_dir
-    while [[ ! -e "$runtime_ancestor" ]]; do
-        runtime_ancestor=$(dirname -- "$runtime_ancestor")
-    done
-    if [[ ! -d "$runtime_ancestor" ]]; then
-        printf 'Error: LAB_RUNTIME_DIR debe ser un directorio externo válido.\n' >&2
-        exit 1
-    fi
-    runtime_source=external
 fi
+[[ "$runtime_candidate" == /* && "$runtime_candidate" != *[$'\001'-$'\037'$'\177']* ]] || runtime_error
+runtime_dir=$(realpath -m -- "$runtime_candidate" 2>/dev/null) || runtime_error
+[[ "$runtime_dir" != *[$'\001'-$'\037'$'\177']* ]] || runtime_error
+[[ "$runtime_dir" != "$lab_root" && "$runtime_dir" != "$lab_root/"* ]] || runtime_error
+runtime_ancestor=$runtime_dir
+while [[ ! -e "$runtime_ancestor" ]]; do
+    runtime_ancestor=$(dirname -- "$runtime_ancestor")
+done
+[[ -d "$runtime_ancestor" ]] || runtime_error
 history_file="$runtime_dir/recent-workspaces"
 
 if [[ $# -eq 1 ]]; then

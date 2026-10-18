@@ -14,7 +14,7 @@ services:
 
     volumes:
       - "${LAB_WORKSPACE:-../}:/workspace"
-      - ../runtime:/home/adolf
+      - ${HOME}/.local/share/lab-ia-opencode/home:/home/adolf
       - ../agentes/agents:/home/adolf/.config/opencode/agents:ro
       - ./opencode.json:/home/adolf/.config/opencode/opencode.json:ro
 

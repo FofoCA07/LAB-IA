@@ -52,7 +52,7 @@ Para elegir un workspace del historial, ejecuta el comando sin argumentos:
 lab-open
 ```
 
-El selector lee `runtime/recent-workspaces` dentro de LAB-IA y muestra únicamente rutas que siguen existiendo y son directorios. Muestra como máximo 10 workspaces, numerados desde 1, y añade como última opción «Escribir otra ruta»:
+El selector lee `recent-workspaces` en el directorio privado externo de LAB-IA y muestra únicamente rutas que siguen existiendo y son directorios. Muestra como máximo 10 workspaces, numerados desde 1, y añade como última opción «Escribir otra ruta»:
 
 ```text
 Workspaces recientes:
@@ -71,7 +71,7 @@ Una ruta escrita manualmente pasa por la misma conversión y validación normal 
 
 El historial se actualiza solo después de abrir correctamente el workspace, verificar el estado de OpenCode y el montaje, y mostrar el contenido de `/workspace`. Guarda primero la ruta real del workspace más reciente, evita duplicados y conserva como máximo 10 entradas.
 
-Se guarda en `runtime/recent-workspaces`. Al vivir dentro de `runtime/`, no se versiona en Git.
+Se guarda en `<directorio de estado>/recent-workspaces`, fuera del repositorio. Véase la configuración del runtime privado al final de este documento.
 
 # Qué hace lab-open
 
@@ -166,29 +166,46 @@ Quedan pendientes:
 - Añadir mejoras adicionales al selector interactivo.
 - Evaluar una posible integración futura con una interfaz web.
 
-# Runtime privado: configuración de transición (fase 1)
+# Runtime privado externo (fase 2)
 
-Backend y `scripts/lab-open` admiten `LAB_RUNTIME_DIR` en el entorno del proceso.
-Debe ser una ruta absoluta externa a la raíz de LAB-IA. Se resuelven enlaces
-simbólicos, incluso en los padres existentes de una ruta aún no creada; se
-rechazan la raíz del repositorio y sus descendientes, rutas relativas y valores
-vacíos. Ambos resolvers usan GNU `realpath -m`, disponible en el entorno Linux/WSL
-que ya utiliza el launcher. Validar la ruta no crea directorios.
+Backend y `scripts/lab-open` resuelven el mismo directorio privado:
 
-Sin la variable se mantiene temporalmente `<LAB-IA>/runtime` (`source: legacy`).
-Con una ruta válida se usa el directorio externo (`source: external`). El estado
-es interno: no se expone al frontend ni se usa una variable `VITE_*`. El fallback
-legacy se eliminará después de la migración real.
+1. `LAB_RUNTIME_DIR`, si está definido, es el override y debe ser una ruta
+   absoluta externa. Un valor explícitamente vacío es un error.
+2. Sin override, se utiliza `$XDG_STATE_HOME/lab-ia` si `XDG_STATE_HOME` no está
+   vacío. Debe ser absoluto.
+3. Si XDG no está definido o está vacío, se utiliza `$HOME/.local/state/lab-ia`.
+   Para los defaults, `HOME` debe ser absoluto y un directorio existente.
 
-Dentro del directorio elegido se mantienen los nombres `lab-ia.db` y
-`recent-workspaces`. Backend y launcher deben recibir el mismo entorno; la
-activación desde el backend hereda ese entorno. No es necesario modificar los
-scripts npm. El launcher crea directorios nuevos con permisos 700 solo al
-escribir, y reemplaza el historial mediante un temporal privado (600) y rename
+Se canonicalizan symlinks y padres existentes mediante GNU `realpath -m`
+(Linux/WSL). La ruta final nunca puede ser la raíz de LAB-IA ni un descendiente,
+independientemente de si viene del override o del default. Validar no crea
+archivos. `source` es `env` o `xdg-default`, solo interno; las rutas no se exponen
+al frontend ni se utiliza una variable `VITE_*`.
+
+El backend y el launcher deben recibir el mismo entorno. La activación desde el
+backend lo hereda. Los scripts npm no necesitan cambios. El historial sigue en
+`<directorio de estado>/recent-workspaces`: el launcher crea directorios nuevos
+con 700 solo al escribir, y reemplaza el archivo mediante temporal 600 y rename
 en el mismo directorio. No cambia permisos de directorios preexistentes.
 
-**Todavía no se ha migrado runtime. No borrar `runtime/` manualmente.** Esta fase
-no mueve ni copia SQLite o el historial y no cambia Docker, sus mounts ni el HOME
-de OpenCode. No activar una ruta externa vacía esperando encontrar los datos
-actuales: el backend conserva su comportamiento de crear una base nueva si no
-existe. La migración consistente de DB/WAL/SHM y el historial será otra fase.
+El arranque normal del backend exige que `lab-ia.db` ya exista como archivo
+regular no vacío, sin symlink, antes de abrir SQLite. No crea el directorio ni
+una base vacía si falta el estado. Esto protege esta instalación migrada frente
+a una ruta equivocada; no sustituye la validación SQLite. Una instalación nueva
+requiere provisionar explícitamente una base inicial válida mediante un
+procedimiento de instalación separado. No hay inicialización, copia desde
+legacy ni migración automática. El esquema y el objeto SQLite compartido no
+cambian.
+
+El HOME de OpenCode es independiente: Compose monta
+`${HOME}/.local/share/lab-ia-opencode/home` en `/home/adolf`. No debe incluir
+`lab-ia.db` ni `recent-workspaces` del backend. Los mounts de agentes y
+configuración siguen siendo read-only; el workspace todavía conserva su modo
+actual. Esta fase no recrea contenedores ni ejecuta modelos.
+
+**`<LAB-IA>/runtime` ya no es fallback.** La carpeta legacy puede seguir existiendo
+durante la verificación y el cutover. No borrarla manualmente hasta terminar las
+validaciones y comprobar los backups. Su existencia todavía deja visibles sus
+datos si se monta la raíz completa de LAB-IA como workspace; este cambio evita
+recrearla, pero no la elimina.

@@ -1,4 +1,4 @@
-import { resolveRuntimePaths } from './runtime-paths.js';
+import { resolveRuntimePaths, requireRuntimeDatabase } from './runtime-paths.js';
 import { createTurnStore } from './turn-store.js';
 import { createSecurityStore } from './security-store.js';
 import { createAuthHandler } from './auth.js';
@@ -15,7 +15,7 @@ import { loadAgentInstructions } from './agent-instructions.js';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { mkdir, open, opendir, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { open, opendir, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, resolve, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createChangeProposalHandler } from './change-proposal.js';
@@ -49,7 +49,7 @@ const validId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 let database;
 try {
   const { DatabaseSync } = await import('node:sqlite');
-  await mkdir(runtimePaths.runtimeDir, { recursive: true, mode: 0o700 });
+  await requireRuntimeDatabase(runtimePaths);
   database = new DatabaseSync(runtimePaths.databasePath);
   database.exec(`
     PRAGMA foreign_keys = ON;
