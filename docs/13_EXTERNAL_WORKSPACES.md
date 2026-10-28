@@ -239,7 +239,7 @@ el contenedor ni prueban OpenCode real.
 Compose habilita `security_opt: [no-new-privileges:true]` para OpenCode. Esto
 bloquea la adquisición de privilegios mediante setuid, setgid y file capabilities
 al ejecutar programas. No equivale a `cap_drop: ALL` ni vuelve read-only el root
-filesystem, que sigue RW. No se añaden `cap_drop`, `tmpfs`, `pids_limit`, `init`,
+filesystem, que sigue RW. En fase 4A no se añaden `cap_drop`, `tmpfs`, `pids_limit`, `init`,
 `stop_grace_period` ni cambios de red.
 
 Se conservan `/workspace` RO, HOME externo RW, agentes RO y `opencode.json` RO,
@@ -247,3 +247,22 @@ la imagen fijada por digest y el usuario 1000:1000. `lab-open` no necesita cambi
 su recreación mediante Compose conserva `security_opt`. La opción se aplicará en
 una futura recreación autorizada; validar esta fase no arranca ni recrea
 contenedores, ni ejecuta OpenCode u Ollama reales.
+
+# Eliminar capabilities Linux (fase 4B)
+
+Compose añade `cap_drop: [ALL]`: elimina todas las capabilities Linux del
+contenedor y no devuelve ninguna (`cap_add` está ausente). Se mantiene
+`security_opt: [no-new-privileges:true]` y el usuario 1000:1000.
+
+Se espera que fallen las operaciones que requieran esas capabilities, como crear
+raw sockets, cambiar arbitrariamente UID/GID o hacer `chown` arbitrario. Esto no
+impide operaciones permitidas al usuario sin capabilities. Los flujos previstos
+de LAB-IA no dependen de ellas: el contenedor lee el workspace y escribe su HOME;
+Proposal y Apply trabajan desde el backend host. No se ha probado OpenCode real
+ni el fallo de estas operaciones privilegiadas en un contenedor.
+
+Los mounts y la red no cambian; el root filesystem sigue RW. No se añaden
+`tmpfs`, `pids_limit`, `init` ni `stop_grace_period`. `lab-open` conserva
+`cap_drop` al recrear mediante Compose y no necesita cambios. La configuración
+se aplicará en una futura recreación autorizada; esta validación no arranca ni
+recrea contenedores ni ejecuta modelos.
