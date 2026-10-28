@@ -31,7 +31,7 @@ async function fixture(t) {
   return { base, root, home, workspace, file, script, env };
 }
 
-test('Compose resolves phase 4B cap drop ALL, NNP and unchanged mounts and network', async t => {
+test('Compose resolves phase 4C RO rootfs, executable temporary tmpfs and unchanged hardening and mounts', async t => {
   const f = await fixture(t);
   for (const selected of [undefined, f.workspace]) {
     const env = { ...f.env, ...(selected ? { LAB_WORKSPACE: selected } : {}) };
@@ -44,13 +44,14 @@ test('Compose resolves phase 4B cap drop ALL, NNP and unchanged mounts and netwo
     assert.deepEqual(service.security_opt, ['no-new-privileges:true']);
     assert.deepEqual(service.cap_drop, ['ALL']);
     assert.equal(Object.hasOwn(service, 'cap_add'), false);
-    assert.equal(Boolean(service.read_only), false);
-    assert.equal(Object.hasOwn(service, 'tmpfs'), false);
+    assert.equal(service.read_only, true);
+    // Exact list excludes /run, /var/tmp, noexec and any additional tmpfs.
+    assert.deepEqual(service.tmpfs, ['/tmp:rw,nosuid,nodev,exec,size=256m,mode=1777']);
     for (const option of ['pids_limit', 'init', 'stop_grace_period', 'network_mode', 'ports', 'pid', 'deploy']) {
       assert.equal(Object.hasOwn(service, option), false);
     }
     assert.equal(service.environment.HOME, '/home/adolf');
-    assert.ok(JSON.stringify(service.extra_hosts).includes('host-gateway'));
+    assert.deepEqual(service.extra_hosts, ['host.docker.internal=host-gateway']);
     assert.deepEqual(service.networks, { default: null });
     assert.equal(service.volumes.length, 4);
     const mounts = Object.fromEntries(service.volumes.map(m => [m.target, m]));

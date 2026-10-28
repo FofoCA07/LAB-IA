@@ -239,7 +239,7 @@ el contenedor ni prueban OpenCode real.
 Compose habilita `security_opt: [no-new-privileges:true]` para OpenCode. Esto
 bloquea la adquisición de privilegios mediante setuid, setgid y file capabilities
 al ejecutar programas. No equivale a `cap_drop: ALL` ni vuelve read-only el root
-filesystem, que sigue RW. En fase 4A no se añaden `cap_drop`, `tmpfs`, `pids_limit`, `init`,
+filesystem, que en fase 4A sigue RW. En fase 4A no se añaden `cap_drop`, `tmpfs`, `pids_limit`, `init`,
 `stop_grace_period` ni cambios de red.
 
 Se conservan `/workspace` RO, HOME externo RW, agentes RO y `opencode.json` RO,
@@ -261,8 +261,32 @@ de LAB-IA no dependen de ellas: el contenedor lee el workspace y escribe su HOME
 Proposal y Apply trabajan desde el backend host. No se ha probado OpenCode real
 ni el fallo de estas operaciones privilegiadas en un contenedor.
 
-Los mounts y la red no cambian; el root filesystem sigue RW. No se añaden
+En fase 4B los mounts y la red no cambian; el root filesystem sigue RW. No se añaden
 `tmpfs`, `pids_limit`, `init` ni `stop_grace_period`. `lab-open` conserva
 `cap_drop` al recrear mediante Compose y no necesita cambios. La configuración
 se aplicará en una futura recreación autorizada; esta validación no arranca ni
 recrea contenedores ni ejecuta modelos.
+
+# Root filesystem de solo lectura y temporales (fase 4C)
+
+Compose añade `read_only: true` y un único tmpfs:
+`/tmp:rw,nosuid,nodev,exec,size=256m,mode=1777`. En la próxima recreación,
+el root filesystem será RO: `/usr`, `/app`, `/root` y `/var` quedarán sin
+escritura, salvo mounts especiales propios de Docker. No se añade ningún mount
+RW para `/run` ni `/var/tmp`.
+
+El bind mount externo de `/home/adolf` sigue RW; `/workspace`, agentes y
+`opencode.json` siguen RO. `/tmp` será efímero, sin volumen persistente, y su
+contenido no se conservará al recrear el contenedor. Mantiene `exec`
+temporalmente por compatibilidad con Bun/OpenTUI y librerías nativas `.so`;
+no se configura `noexec`. El tmpfs tiene un límite de 256 MiB, consume memoria
+y puede usar swap; no reserva toda esa memoria de antemano.
+
+Se mantienen NNP, `cap_drop: [ALL]`, ausencia de `cap_add`, usuario e imagen
+fijada por digest. Esta fase no incluye límites de PID, `init`, cambios de parada
+ni de red. `lab-open` ya aplica las opciones mediante Compose al recrear y no
+necesita cambios; conserva su comprobación de `/workspace` RO.
+
+La validación es estática y con mocks: no recrea contenedores ni ejecuta modelos.
+No se ha comprobado que OpenCode funcione con root filesystem RO. El contenedor
+existente no cambia hasta una futura recreación autorizada.

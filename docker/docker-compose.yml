@@ -7,6 +7,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,exec,size=256m,mode=1777
 
     environment:
       HOME: /home/adolf
