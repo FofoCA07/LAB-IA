@@ -10,6 +10,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,nosuid,nodev,exec,size=256m,mode=1777
+    init: true
+    pids_limit: 256
+    stop_grace_period: 30s
 
     environment:
       HOME: /home/adolf

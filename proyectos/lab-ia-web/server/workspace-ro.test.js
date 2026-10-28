@@ -31,7 +31,7 @@ async function fixture(t) {
   return { base, root, home, workspace, file, script, env };
 }
 
-test('Compose resolves phase 4C RO rootfs, executable temporary tmpfs and unchanged hardening and mounts', async t => {
+test('Compose resolves phase 4D process limits and unchanged hardening, mounts and network', async t => {
   const f = await fixture(t);
   for (const selected of [undefined, f.workspace]) {
     const env = { ...f.env, ...(selected ? { LAB_WORKSPACE: selected } : {}) };
@@ -47,7 +47,10 @@ test('Compose resolves phase 4C RO rootfs, executable temporary tmpfs and unchan
     assert.equal(service.read_only, true);
     // Exact list excludes /run, /var/tmp, noexec and any additional tmpfs.
     assert.deepEqual(service.tmpfs, ['/tmp:rw,nosuid,nodev,exec,size=256m,mode=1777']);
-    for (const option of ['pids_limit', 'init', 'stop_grace_period', 'network_mode', 'ports', 'pid', 'deploy']) {
+    assert.equal(service.init, true);
+    assert.equal(service.pids_limit, 256);
+    assert.equal(service.stop_grace_period, '30s');
+    for (const option of ['network_mode', 'ports', 'pid', 'deploy']) {
       assert.equal(Object.hasOwn(service, option), false);
     }
     assert.equal(service.environment.HOME, '/home/adolf');

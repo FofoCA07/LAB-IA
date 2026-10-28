@@ -283,10 +283,31 @@ no se configura `noexec`. El tmpfs tiene un límite de 256 MiB, consume memoria
 y puede usar swap; no reserva toda esa memoria de antemano.
 
 Se mantienen NNP, `cap_drop: [ALL]`, ausencia de `cap_add`, usuario e imagen
-fijada por digest. Esta fase no incluye límites de PID, `init`, cambios de parada
+fijada por digest. La fase 4C no incluye límites de PID, `init`, cambios de parada
 ni de red. `lab-open` ya aplica las opciones mediante Compose al recrear y no
 necesita cambios; conserva su comprobación de `/workspace` RO.
 
 La validación es estática y con mocks: no recrea contenedores ni ejecuta modelos.
 No se ha comprobado que OpenCode funcione con root filesystem RO. El contenedor
 existente no cambia hasta una futura recreación autorizada.
+
+# Procesos y cierre (fase 4D)
+
+Compose añade `init: true`, `pids_limit: 256` y `stop_grace_period: 30s`.
+El init ayuda a recoger procesos hijos terminados y reenviar señales. El límite
+de PID restringe procesos/hilos del contenedor: 256 es un valor inicial pendiente
+de validar con la carga real.
+
+La gracia de 30 segundos da tiempo para un cierre limpio antes de forzar la
+terminación. El Compose anterior no declaraba una gracia de 1 segundo; no se
+ha comprobado ese valor previo. `runLabOpen` en `server/index.js` impone un
+timeout global de 120 segundos a la activación: los 30 segundos caben y dejan
+hasta 90 segundos para las demás operaciones. El script `lab-open` no impone un
+timeout menor ni necesita cambios. Esto no garantiza que toda activación termine
+en plazo, por ejemplo si Docker o la descarga de imagen tardan más.
+
+Esta fase no toca red, DNS ni `extra_hosts`. Se conservan NNP, `cap_drop: [ALL]`,
+rootfs RO, tmpfs de `/tmp` con `exec`, mounts, imagen y usuario. Las opciones
+se aplicarán en una futura recreación autorizada. La validación estática y con
+mocks no demuestra compatibilidad real ni un cierre correcto de OpenCode;
+no se ha ejecutado el contenedor real.
