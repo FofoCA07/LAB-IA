@@ -3,6 +3,8 @@ services:
     image: ghcr.io/anomalyco/opencode@sha256:bf9d0e84b7cedef436a8f57db4d48767cd5d8fc6604f666335c1cc916b199a97
     container_name: opencode
     user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
 
     environment:
       HOME: /home/adolf

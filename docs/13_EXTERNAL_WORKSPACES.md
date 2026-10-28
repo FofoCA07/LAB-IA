@@ -233,3 +233,17 @@ historial, pero no intenta revertir ni modificar mounts automáticamente.
 Editar Compose no altera un contenedor ya existente. El nuevo mount se aplicará
 en una recreación futura autorizada; las validaciones de esta fase no recrean
 el contenedor ni prueban OpenCode real.
+
+# No adquirir nuevos privilegios (fase 4A)
+
+Compose habilita `security_opt: [no-new-privileges:true]` para OpenCode. Esto
+bloquea la adquisición de privilegios mediante setuid, setgid y file capabilities
+al ejecutar programas. No equivale a `cap_drop: ALL` ni vuelve read-only el root
+filesystem, que sigue RW. No se añaden `cap_drop`, `tmpfs`, `pids_limit`, `init`,
+`stop_grace_period` ni cambios de red.
+
+Se conservan `/workspace` RO, HOME externo RW, agentes RO y `opencode.json` RO,
+la imagen fijada por digest y el usuario 1000:1000. `lab-open` no necesita cambios:
+su recreación mediante Compose conserva `security_opt`. La opción se aplicará en
+una futura recreación autorizada; validar esta fase no arranca ni recrea
+contenedores, ni ejecuta OpenCode u Ollama reales.

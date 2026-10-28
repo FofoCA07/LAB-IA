@@ -31,7 +31,7 @@ async function fixture(t) {
   return { base, root, home, workspace, file, script, env };
 }
 
-test('Compose resolves RO project, independent RW HOME and RO configuration', async t => {
+test('Compose resolves phase 4A NNP, pinned image and unchanged mount permissions', async t => {
   const f = await fixture(t);
   for (const selected of [undefined, f.workspace]) {
     const env = { ...f.env, ...(selected ? { LAB_WORKSPACE: selected } : {}) };
@@ -40,7 +40,14 @@ test('Compose resolves RO project, independent RW HOME and RO configuration', as
     const service = JSON.parse(stdout).services.opencode;
     assert.equal(service.user, '1000:1000');
     assert.equal(service.working_dir, '/workspace');
-    assert.equal(service.image, 'ghcr.io/anomalyco/opencode:latest');
+    assert.equal(service.image, 'ghcr.io/anomalyco/opencode@sha256:bf9d0e84b7cedef436a8f57db4d48767cd5d8fc6604f666335c1cc916b199a97');
+    assert.deepEqual(service.security_opt, ['no-new-privileges:true']);
+    assert.equal(Object.hasOwn(service, 'cap_drop'), false);
+    assert.equal(Boolean(service.read_only), false);
+    assert.equal(Object.hasOwn(service, 'tmpfs'), false);
+    for (const option of ['pids_limit', 'init', 'stop_grace_period']) {
+      assert.equal(Object.hasOwn(service, option), false);
+    }
     assert.equal(service.environment.HOME, '/home/adolf');
     assert.ok(JSON.stringify(service.extra_hosts).includes('host-gateway'));
     assert.equal(service.volumes.length, 4);
