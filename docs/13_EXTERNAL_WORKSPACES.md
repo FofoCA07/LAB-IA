@@ -352,3 +352,94 @@ Referencias del tag exacto: [flags](https://github.com/anomalyco/opencode/blob/v
 [configuración](https://github.com/anomalyco/opencode/blob/v1.17.18/packages/core/src/v1/config/config.ts),
 [plugins](https://github.com/anomalyco/opencode/blob/v1.17.18/packages/opencode/src/plugin/index.ts)
 y [provider empaquetado](https://github.com/anomalyco/opencode/blob/v1.17.18/packages/opencode/src/provider/provider.ts).
+
+### FASE 5B.5 — Gateway mínimo validado únicamente con mock
+
+Se añade `proyectos/lab-ia-web/server/opencode-gateway.js`, independiente del
+backend. Exporta `createOpenCodeGateway({ upstreamHost, upstreamPort, ...limits })`
+y devuelve un servidor HTTP nativo **sin llamar a listen**. No incorpora CLI,
+configuración Docker ni dependencias nuevas. El gateway aún NO está desplegado;
+no cambian Compose, el baseURL de producción ni los transportes del backend.
+Ollama real y OpenCode real NO se utilizan en estas pruebas. El upstream es
+únicamente un mock HTTP sobre `127.0.0.1` con puerto efímero.
+
+La frontera permite exclusivamente `POST /v1/chat/completions`, comparando el
+request-target original. Queries, absolute-form, escapes del path, variantes con
+barras, CONNECT, Upgrade y cualquier otro método/path quedan denegados. El
+upstream HTTP recibe host/puerto del operador, path constante y modelo fijado de
+nuevo a `qwen3:8b` después de validar el body; el cliente no elige destino. No se
+siguen redirects ni se transmiten sus headers Location.
+
+El contrato inicial acepta únicamente estas propiedades raíz:
+
+- `model`: string exacto `qwen3:8b` y propiedad propia obligatoria.
+- `messages`: array no vacío; roles system/user/assistant/tool, texto string o
+  partes `{type:"text",text:string}`; llamadas de funciones de assistant y sus
+  respuestas tool con identificador. Se admite content null/ausente únicamente
+  en assistant con tool_calls. No imágenes, audio ni recursos remotos.
+- `stream`: booleano. `stream_options` solo admite include_usage booleano y
+  requiere stream true.
+- `temperature`: número finito entre 0 y 2; `top_p`: entre 0 y 1;
+  `max_tokens`: entero positivo hasta 2147483647.
+- `stop`: string o array de hasta cuatro strings.
+- `tools`: funciones con nombre, descripción opcional, parameters objeto JSON
+  Schema y strict booleano opcional. `tool_choice`: auto/none/required o función
+  nombrada que exista en tools. No herramientas web/cloud incorporadas.
+- `response_format`: text, json_object o json_schema; este último exige nombre
+  y schema objeto, con description/strict opcionales.
+
+Se validan campos y tipos de cada estructura del contrato. Los schemas se
+transportan como datos; no se implementa un validador completo de JSON Schema.
+Se rechazan referencias externas, `$dynamicRef`, `$id` y `$schema` para evitar
+resolución remota/ambigua. Las referencias `$ref` solo pueden comenzar por `#`.
+Las URLs escritas dentro de texto ordinario no se interpretan ni se descargan.
+Campos adicionales del SDK —por ejemplo reasoning_effort, seed, penalizaciones
+o extensiones del provider— se rechazan por ahora. La compatibilidad exacta con
+`@ai-sdk/openai-compatible 2.0.41` sigue pendiente de contrastar contra requests
+reales del SDK dirigidos al mock; estos tests no ejecutan OpenCode.
+
+Solo se admite application/json, opcionalmente charset=utf-8, sin compresión.
+El body se limita a 2 MiB de bytes recibidos, incluyendo transferencia chunked.
+UTF-8 se decodifica en modo fatal y se rechaza BOM. JSON.parse valida la sintaxis;
+una segunda inspección de tokens estructurales detecta claves duplicadas por
+objeto después de decodificar escapes (incluye model/mo\\u0064el), sin usar reviver.
+También rechaza profundidad superior a 64 niveles y números no finitos. La raíz
+debe ser objeto. No se sustituye el parser de sintaxis nativo por uno propio.
+
+Los headers upstream se generan desde cero: Content-Type, Accept, Content-Length
+y Host/Connection generados por Node. No se reenvían credenciales, cookies,
+Forwarded/X-Forwarded, headers arbitrarios ni framing entrante. El parser HTTP
+estricto de Node rechaza framing inválido; además se rechazan headers singleton
+duplicados, trailers y Expect. Máximo 16 KiB de headers y una petición por socket.
+
+Presupuestos iniciales, configurables para tests: headers entrantes 10 s, body
+10 s, headers upstream 90 s, inactividad upstream 30 s y total 105 s. Solo una
+petición activa por defecto, sin cola; exceso devuelve 429. La respuesta normal
+se limita a 2 MiB, se valida como JSON de completion y se vuelve a serializar.
+SSE se transmite incrementalmente con backpressure mediante pipeline: UTF-8
+fragmentado, eventos choices/usage y [DONE] se conservan. Cada evento tiene un
+límite de 256 KiB y el stream completo de 32 MiB; no se acumula toda la respuesta.
+No se admiten comentarios/otros tipos de evento SSE en este contrato inicial.
+Los eventos con error, JSON inválido, UTF-8 inválido o terminación sin [DONE]
+cierran el stream sin retransmitir el error interno. Tras enviar headers puede
+haber una respuesta parcial terminada abruptamente, no un nuevo status HTTP.
+
+Solo se aceptan respuestas upstream exitosas 200 con Content-Type apropiado;
+los errores 4xx/5xx conservan su status con body constante, otros estados se
+convierten en 502. No se reenvían errores internos ni headers del upstream.
+Esto no censura texto que el modelo genere como parte de una completion válida.
+Desconexión del cliente y timeouts cancelan el upstream. El logger opcional solo
+recibe resultado, status, duración, bytes y código seguro; nunca prompts,
+respuestas, headers, secretos ni stacks.
+
+Los tests dedicados comprueban inferencia sintética JSON/SSE, headers, duplicadas,
+framing HTTP crudo, límites, cancelación, timeouts, concurrencia y backpressure.
+Cada denegación previa al forwarding exige cero requests al mock. Un redirect
+requiere recibir primero una respuesta upstream: su test comprueba un request
+inicial y **cero requests al destino del redirect**.
+
+La fase reduce la API que podría exponerse a OpenCode; **NO demuestra todavía
+NIVEL 2**, aislamiento de Internet ni compatibilidad con Ollama/OpenCode reales.
+Despliegue, imagen de ejecución, redes privadas, ausencia de acceso directo a
+Ollama, forwarding deshabilitado y egress de Ollama requieren fases posteriores.
+El backend continúa usando Ollama directamente mediante sus transportes actuales.
