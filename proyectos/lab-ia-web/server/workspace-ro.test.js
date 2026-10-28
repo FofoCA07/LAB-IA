@@ -11,6 +11,7 @@ import { runApplyGit } from './apply-change-proposal.js';
 
 const run = promisify(execFile);
 const compose = await readFile(new URL('../../../docker/docker-compose.yml', import.meta.url), 'utf8');
+const opencodeConfig = JSON.parse(await readFile(new URL('../../../docker/opencode.json', import.meta.url), 'utf8'));
 const launcher = await readFile(new URL('../../../scripts/lab-open', import.meta.url), 'utf8');
 
 async function fixture(t) {
@@ -31,7 +32,7 @@ async function fixture(t) {
   return { base, root, home, workspace, file, script, env };
 }
 
-test('Compose resolves phase 4D process limits and unchanged hardening, mounts and network', async t => {
+test('Compose resolves phase 5A offline preparation and unchanged hardening, mounts and network', async t => {
   const f = await fixture(t);
   for (const selected of [undefined, f.workspace]) {
     const env = { ...f.env, ...(selected ? { LAB_WORKSPACE: selected } : {}) };
@@ -50,10 +51,15 @@ test('Compose resolves phase 4D process limits and unchanged hardening, mounts a
     assert.equal(service.init, true);
     assert.equal(service.pids_limit, 256);
     assert.equal(service.stop_grace_period, '30s');
-    for (const option of ['network_mode', 'ports', 'pid', 'deploy']) {
+    for (const option of ['network_mode', 'ports', 'dns', 'dns_search', 'dns_opt', 'pid', 'deploy']) {
       assert.equal(Object.hasOwn(service, option), false);
     }
-    assert.equal(service.environment.HOME, '/home/adolf');
+    assert.deepEqual(service.environment, {
+      HOME: '/home/adolf',
+      OPENCODE_DISABLE_AUTOUPDATE: 'true',
+      OPENCODE_DISABLE_MODELS_FETCH: 'true',
+      OPENCODE_DISABLE_DEFAULT_PLUGINS: 'true',
+    });
     assert.deepEqual(service.extra_hosts, ['host.docker.internal=host-gateway']);
     assert.deepEqual(service.networks, { default: null });
     assert.equal(service.volumes.length, 4);
@@ -68,6 +74,26 @@ test('Compose resolves phase 4D process limits and unchanged hardening, mounts a
     assert.ok(!JSON.stringify(service).includes('/workspace/runtime'));
     await assert.rejects(access(join(f.root, 'runtime')));
     await assert.rejects(access(join(f.home, '.local')));
+  }
+});
+
+test('OpenCode config disables updates and sharing while selecting only the unchanged local Ollama provider', () => {
+  assert.equal(opencodeConfig.$schema, 'https://opencode.ai/config.json');
+  assert.equal(opencodeConfig.autoupdate, false);
+  assert.equal(opencodeConfig.share, 'disabled');
+  assert.deepEqual(opencodeConfig.enabled_providers, ['ollama']);
+  assert.equal(opencodeConfig.model, 'ollama/qwen3:8b');
+  assert.deepEqual(opencodeConfig.provider, {
+    ollama: {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'Ollama local',
+      options: { baseURL: 'http://host.docker.internal:11434/v1' },
+      models: { 'qwen3:8b': { name: 'Qwen3 8B local' } },
+    },
+  });
+  // Keep optional integrations absent; do not enable installers or remote tools.
+  for (const option of ['plugin', 'mcp', 'lsp', 'formatter', 'instructions', 'skills', 'experimental']) {
+    assert.equal(Object.hasOwn(opencodeConfig, option), false);
   }
 });
 

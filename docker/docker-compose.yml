@@ -16,6 +16,9 @@ services:
 
     environment:
       HOME: /home/adolf
+      OPENCODE_DISABLE_AUTOUPDATE: "true"
+      OPENCODE_DISABLE_MODELS_FETCH: "true"
+      OPENCODE_DISABLE_DEFAULT_PLUGINS: "true"
 
     stdin_open: true
     tty: true

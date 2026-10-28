@@ -311,3 +311,44 @@ rootfs RO, tmpfs de `/tmp` con `exec`, mounts, imagen y usuario. Las opciones
 se aplicarán en una futura recreación autorizada. La validación estática y con
 mocks no demuestra compatibilidad real ni un cierre correcto de OpenCode;
 no se ha ejecutado el contenedor real.
+
+# Preparación offline sin aislamiento de red (fase 5A)
+
+Para OpenCode 1.17.18, Compose conserva `HOME=/home/adolf` y añade
+`OPENCODE_DISABLE_AUTOUPDATE=true`, `OPENCODE_DISABLE_MODELS_FETCH=true` y
+`OPENCODE_DISABLE_DEFAULT_PLUGINS=true`. La configuración global montada desde
+`docker/opencode.json` añade `autoupdate: false`, `share: "disabled"` y
+`enabled_providers: ["ollama"]`. Se deshabilitan las comprobaciones/actualizaciones
+automáticas, la descarga inicial y el refresco automático del catálogo models.dev,
+el uso compartido de sesiones y la selección de providers distintos de Ollama.
+No se elimina código de providers empaquetados ni se tocan credenciales.
+
+Se deshabilitan los default plugins tras revisar su función en esa versión:
+son integraciones de autenticación de otros providers; Ollama usa el SDK
+`@ai-sdk/openai-compatible` empaquetado y no depende de ellas. Workspace summary
+usa el reviewer con herramientas denegadas y `--pure`; los hooks sin plugins
+devuelven su salida sin alteraciones. Esta conclusión proviene del código, no
+de una prueba de OpenCode real. No se añaden plugins externos.
+
+LSP y formatters siguen ausentes de la configuración (deshabilitados por defecto
+en esta versión); no se habilitan instaladores de herramientas. Compose no
+configura `OTEL_EXPORTER_OTLP_ENDPOINT`; no se añade un flag genérico de
+telemetría. El modelo sigue siendo `ollama/qwen3:8b` con baseURL
+`http://host.docker.internal:11434/v1`.
+
+Esta fase reduce tráfico externo automático, pero NO bloquea Internet: OpenCode
+conserva acceso de red general. No cambian networks, DNS, `extra_hosts`, puertos
+ni el hardening previo. La preparación busca facilitar una prueba offline
+posterior. Una instalación/reparación futura de dependencias puede requerir
+Internet; comandos explícitos de actualización/refresco o nuevas integraciones
+también podrían intentar conexiones. Estos ajustes no son una política de egress
+ni impiden que otras fuentes de configuración introduzcan opciones distintas.
+
+`lab-open` no necesita cambios: Compose aplica las variables en una futura
+recreación autorizada. No se recrea el contenedor ni se ejecutan modelos durante
+esta validación. Las nuevas variables no alteran un contenedor ya existente.
+
+Referencias del tag exacto: [flags](https://github.com/anomalyco/opencode/blob/v1.17.18/packages/core/src/flag/flag.ts),
+[configuración](https://github.com/anomalyco/opencode/blob/v1.17.18/packages/core/src/v1/config/config.ts),
+[plugins](https://github.com/anomalyco/opencode/blob/v1.17.18/packages/opencode/src/plugin/index.ts)
+y [provider empaquetado](https://github.com/anomalyco/opencode/blob/v1.17.18/packages/opencode/src/provider/provider.ts).
