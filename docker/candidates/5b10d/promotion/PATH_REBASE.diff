@@ -1,0 +1,40 @@
+--- docker/candidates/5b10d/compose.yaml
++++ docker/candidates/5b10d/promotion/files/docker/docker-compose.yml
+@@ -1,2 +1 @@
+-# CANDIDATE ONLY. Never combine with the active Compose file.
+-# Paths resolve from this directory; future promotion requires path review.
++# PREPARADO — NO DESPLEGADO. Install at docker/docker-compose.yml only after approval.
+@@ -41 +40 @@
+-        source: ../../../agentes/agents
++        source: ../agentes/agents
+@@ -81 +80 @@
+-        source: ../../../proyectos/lab-ia-web/server/opencode-gateway.js
++        source: ../proyectos/lab-ia-web/server/opencode-gateway.js
+--- docker/candidates/5b10d/lab-open
++++ docker/candidates/5b10d/promotion/files/scripts/lab-open
+@@ -4 +4 @@
+-# Candidate: daily workspace selection only; infrastructure must already exist.
++# META A: daily workspace selection only; infrastructure must already exist.
+@@ -21,9 +21 @@
+-if [[ "$script_dir" == */docker/candidates/5b10d ]]; then
+-    lab_root=$(cd -- "$script_dir/../../.." && pwd -P)
+-elif [[ "${script_dir##*/}" == scripts ]]; then
+-    lab_root=$(cd -- "$script_dir/.." && pwd -P)
+-else
+-    printf 'Error: ubicación del launcher no reconocida.\n' >&2
+-    exit 1
+-fi
+-candidate_dir="$lab_root/docker/candidates/5b10d"
++lab_root=$(cd -- "$script_dir/.." && pwd -P)
+@@ -144,4 +136,4 @@
+-docker_dir="$candidate_dir"
+-
+-if [[ ! -f "$docker_dir/compose.yaml" ]]; then
+-    printf 'Error: no se encontró el Compose candidato.\n' >&2
++docker_dir="$lab_root/docker"
++
++if [[ ! -f "$docker_dir/docker-compose.yml" ]]; then
++    printf 'Error: no se encontró el Compose de LAB-IA.\n' >&2
+@@ -167 +159 @@
+-    LAB_WORKSPACE="$workspace" docker compose -p docker -f "$docker_dir/compose.yaml" "$@"
++    LAB_WORKSPACE="$workspace" docker compose -p docker -f "$docker_dir/docker-compose.yml" "$@"

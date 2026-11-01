@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# META A: daily workspace selection only; infrastructure must already exist.
+
+trap 'status=$?; printf "Error: lab-open falló en la línea %s (código %s).\n" "$LINENO" "$status" >&2; exit "$status"' ERR
+
+usage() {
+    printf 'Uso: %s <ruta-del-proyecto>\n' "${0##*/}" >&2
+    printf 'Ejemplo: %s "/mnt/c/Users/usuario/Mi proyecto"\n' "${0##*/}" >&2
+}
+
+if [[ $# -gt 1 ]]; then
+    usage
+    exit 1
+fi
+
+# Shared semantics with server/runtime-paths.js. Validation does not create files.
+script_path=$(realpath -e -- "${BASH_SOURCE[0]}")
+script_dir=$(dirname -- "$script_path")
+lab_root=$(cd -- "$script_dir/.." && pwd -P)
+runtime_source=xdg-default
+runtime_error() {
+    printf 'Error: configuración del runtime externo no válida.\n' >&2
+    exit 1
+}
+if [[ ${LAB_RUNTIME_DIR+x} ]]; then
+    runtime_candidate=$LAB_RUNTIME_DIR
+    runtime_source=env
+else
+    [[ "${HOME:-}" == /* && -d "${HOME:-}" ]] || runtime_error
+    [[ "$HOME" != *[$'\001'-$'\037'$'\177']* ]] || runtime_error
+    if [[ -n "${XDG_STATE_HOME:-}" ]]; then
+        [[ "$XDG_STATE_HOME" == /* ]] || runtime_error
+        runtime_candidate="$XDG_STATE_HOME/lab-ia"
+    else
+        runtime_candidate="$HOME/.local/state/lab-ia"
+    fi
+fi
+[[ "$runtime_candidate" == /* && "$runtime_candidate" != *[$'\001'-$'\037'$'\177']* ]] || runtime_error
+runtime_dir=$(realpath -m -- "$runtime_candidate" 2>/dev/null) || runtime_error
+[[ "$runtime_dir" != *[$'\001'-$'\037'$'\177']* ]] || runtime_error
+[[ "$runtime_dir" != "$lab_root" && "$runtime_dir" != "$lab_root/"* ]] || runtime_error
+runtime_ancestor=$runtime_dir
+while [[ ! -e "$runtime_ancestor" ]]; do
+    runtime_ancestor=$(dirname -- "$runtime_ancestor")
+done
+[[ -d "$runtime_ancestor" ]] || runtime_error
+history_file="$runtime_dir/recent-workspaces"
+
+if [[ $# -eq 1 ]]; then
+    requested_workspace=$1
+else
+    selectable_workspaces=()
+
+    if [[ -f "$history_file" ]]; then
+        while IFS= read -r previous_workspace || [[ -n "$previous_workspace" ]]; do
+            [[ -d "$previous_workspace" ]] || continue
+            selectable_workspaces+=("$previous_workspace")
+            [[ ${#selectable_workspaces[@]} -lt 10 ]] || break
+        done < "$history_file"
+    fi
+
+    requested_workspace=''
+    if [[ ${#selectable_workspaces[@]} -gt 0 ]]; then
+        printf 'Workspaces recientes:\n'
+        for index in "${!selectable_workspaces[@]}"; do
+            printf '%s) %s\n' "$((index + 1))" "${selectable_workspaces[index]}"
+        done
+        manual_option=$((${#selectable_workspaces[@]} + 1))
+        printf '%s) Escribir otra ruta\n' "$manual_option"
+
+        while true; do
+            printf 'Selecciona una opción: '
+            if ! IFS= read -r selection; then
+                printf '\nError: no se pudo leer la selección.\n' >&2
+                exit 1
+            fi
+            if [[ "$selection" == "$manual_option" ]]; then
+                break
+            fi
+            for index in "${!selectable_workspaces[@]}"; do
+                if [[ "$selection" == "$((index + 1))" ]]; then
+                    requested_workspace=${selectable_workspaces[index]}
+                    break
+                fi
+            done
+            [[ -z "$requested_workspace" ]] || break
+            printf 'Error: selecciona un número entre 1 y %s.\n' "$manual_option" >&2
+        done
+    fi
+
+    if [[ -z "$requested_workspace" ]]; then
+        printf 'Ruta del proyecto: '
+        if ! IFS= read -r requested_workspace; then
+            printf '\nError: no se pudo leer la ruta.\n' >&2
+            exit 1
+        fi
+    fi
+fi
+
+workspace_path=$requested_workspace
+if [[ "$workspace_path" =~ ^[a-zA-Z]: ]]; then
+    if [[ "${workspace_path:2:1}" != '\' && "${workspace_path:2:1}" != '/' ]]; then
+        printf 'Error: la ruta de Windows debe ser absoluta, por ejemplo C:\\Users\\usuario\\Proyecto.\n' >&2
+        exit 1
+    fi
+    drive=${workspace_path:0:1}
+    windows_path=${workspace_path:2}
+    workspace_path="/mnt/${drive,,}${windows_path//\\//}"
+elif [[ "$workspace_path" != /* && "$workspace_path" == *\\* ]]; then
+    printf 'Error: las rutas relativas de Windows no están permitidas.\n' >&2
+    exit 1
+fi
+
+if [[ ! -d "$workspace_path" ]]; then
+    printf 'Error: la ruta no existe o no es un directorio: %s\n' "$requested_workspace" >&2
+    exit 1
+fi
+
+workspace=$(cd -- "$workspace_path" && pwd -P)
+# The backend authorizes against recent-workspaces; enforce the same boundary
+# for direct daily CLI use. Registering a new workspace is an administrative task.
+allowed=false
+if [[ -f "$history_file" ]]; then
+    while IFS= read -r approved || [[ -n "$approved" ]]; do
+        [[ "$approved" == /* && "$approved" != *[$'\001'-$'\037'$'\177']* && -d "$approved" ]] || continue
+        canonical_approved=$(realpath -e -- "$approved")
+        if [[ "$canonical_approved" == "$workspace" ]]; then allowed=true; break; fi
+    done < "$history_file"
+fi
+if [[ "$allowed" != true ]]; then
+    printf 'Error: el workspace no pertenece al historial autorizado.\n' >&2
+    exit 1
+fi
+docker_dir="$lab_root/docker"
+
+if [[ ! -f "$docker_dir/docker-compose.yml" ]]; then
+    printf 'Error: no se encontró el Compose de LAB-IA.\n' >&2
+    exit 1
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+    printf 'Error: Docker no está disponible en PATH.\n' >&2
+    exit 1
+fi
+
+cd -- "$docker_dir"
+
+# Do not expose raw daemon/config diagnostics through the everyday launcher.
+docker() {
+    if ! command docker "$@" 2>/dev/null; then
+        printf 'Error: operación Docker no completada.\n' >&2
+        return 1
+    fi
+}
+
+compose() {
+    LAB_WORKSPACE="$workspace" docker compose -p docker -f "$docker_dir/docker-compose.yml" "$@"
+}
+
+printf 'Workspace solicitado: %s\n' "$requested_workspace"
+printf 'Workspace resuelto: %s\n' "$workspace"
+
+# Do not create HOME or start/recreate Gateway implicitly.
+expected_home="$HOME/.local/share/lab-ia-opencode/home-meta-a"
+# No new mandatory backend argument/environment variable. Administrative
+# promotion prepares this exact directory; this script never creates it.
+LAB_OPENCODE_HOME=${LAB_OPENCODE_HOME:-$expected_home}
+[[ -d "$LAB_OPENCODE_HOME" && "$LAB_OPENCODE_HOME" == "$expected_home" ]] || runtime_error
+[[ "$(realpath -e -- "$LAB_OPENCODE_HOME")" == "$expected_home" ]] || runtime_error
+export LAB_OPENCODE_HOME
+compose config --quiet
+front_policy=$(docker network inspect docker_front --format '{{.Internal}}|{{.EnableIPv6}}|{{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}')
+[[ "$front_policy" == 'true|false|isolated' ]] || runtime_error
+gateway_id=$(compose ps -q opencode-gateway)
+[[ -n "$gateway_id" ]] || runtime_error
+gateway_state=$(docker inspect --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|{{len .NetworkSettings.Networks}}|{{if index .NetworkSettings.Networks "docker_front"}}front{{end}}|{{if index .NetworkSettings.Networks "docker_upstream"}}upstream{{end}}' "$gateway_id")
+[[ "$gateway_state" == 'running|healthy|2|front|upstream' ]] || runtime_error
+# Selection must not provision infrastructure or perform the initial cutover.
+upstream_policy=$(docker network inspect docker_upstream --format '{{.Driver}}|{{.Internal}}|{{.EnableIPv6}}')
+[[ "$upstream_policy" == 'bridge|false|false' ]] || runtime_error
+current_id=$(compose ps -a -q opencode)
+[[ -n "$current_id" ]] || runtime_error
+current_topology=$(docker inspect --format '{{.State.Status}}|{{len .NetworkSettings.Networks}}|{{if index .NetworkSettings.Networks "docker_front"}}front{{end}}|{{len .HostConfig.ExtraHosts}}|{{len .HostConfig.PortBindings}}' "$current_id")
+[[ "$current_topology" == 'running|1|front|0|0' ]] || runtime_error
+current_ro=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.RW}}{{end}}{{end}}' "$current_id")
+[[ "$current_ro" == false ]] || runtime_error
+compose up -d --no-deps --force-recreate --pull never --no-build opencode
+
+container_id=$(compose ps -a -q opencode)
+if [[ -z "$container_id" ]]; then
+    printf 'Error: no se encontró el contenedor de OpenCode.\n' >&2
+    exit 1
+fi
+
+topology=$(docker inspect --format '{{len .NetworkSettings.Networks}}|{{if index .NetworkSettings.Networks "docker_front"}}front{{end}}|{{len .HostConfig.ExtraHosts}}|{{len .HostConfig.PortBindings}}' "$container_id")
+[[ "$topology" == '1|front|0|0' ]] || runtime_error
+state=$(docker inspect --format '{{.State.Status}}' "$container_id")
+mounted_workspace=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "$container_id")
+workspace_rw=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.RW}}{{end}}{{end}}' "$container_id")
+
+printf 'Workspace montado: %s\n' "${mounted_workspace:-no encontrado}"
+printf 'Estado de OpenCode: %s\n' "$state"
+
+if [[ "$state" != running ]]; then
+    printf 'Error: el contenedor de OpenCode no está en ejecución.\n' >&2
+    exit 1
+fi
+
+if [[ "$mounted_workspace" != "$workspace" ]]; then
+    printf 'Error: el montaje de /workspace no coincide con el proyecto solicitado.\n' >&2
+    exit 1
+fi
+
+# Require an explicit Docker boolean; missing/ambiguous metadata fails closed.
+if [[ "$workspace_rw" != false ]]; then
+    printf 'Error: el montaje de /workspace debe ser de solo lectura.\n' >&2
+    exit 1
+fi
+
+printf 'Contenido de /workspace:\n'
+compose exec -T opencode ls -la /workspace
+
+(umask 077; mkdir -p -- "$runtime_dir")
+
+recent_workspaces=("$workspace")
+if [[ -f "$history_file" ]]; then
+    while IFS= read -r previous_workspace || [[ -n "$previous_workspace" ]]; do
+        [[ -n "$previous_workspace" ]] || continue
+        duplicate=false
+        for recent_workspace in "${recent_workspaces[@]}"; do
+            if [[ "$previous_workspace" == "$recent_workspace" ]]; then
+                duplicate=true
+                break
+            fi
+        done
+        if [[ "$duplicate" == false ]]; then
+            recent_workspaces+=("$previous_workspace")
+        fi
+        if [[ ${#recent_workspaces[@]} -ge 10 ]]; then
+            break
+        fi
+    done < "$history_file"
+fi
+
+history_temp=$(umask 077; mktemp -- "$runtime_dir/.recent-workspaces.XXXXXXXX")
+trap 'rm -f -- "$history_temp"' EXIT
+printf '%s\n' "${recent_workspaces[@]}" > "$history_temp"
+mv -fT -- "$history_temp" "$history_file"
+trap - EXIT

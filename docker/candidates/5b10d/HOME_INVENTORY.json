@@ -1,0 +1,726 @@
+{
+  "platform": "linux/amd64",
+  "direct": {
+    "@opencode-ai/plugin": "1.17.18"
+  },
+  "packages": [
+    {
+      "package": "@opencode-ai/plugin",
+      "expectedVersion": "1.17.18",
+      "installedVersion": "1.17.18",
+      "location": "node_modules/@opencode-ai/plugin",
+      "runtime": {
+        "@ai-sdk/provider": "3.0.8",
+        "@opencode-ai/sdk": "1.17.18",
+        "effect": "4.0.0-beta.83",
+        "zod": "4.1.8"
+      },
+      "optional": {},
+      "peers": {
+        "@opentui/core": ">=0.4.3",
+        "@opentui/keymap": ">=0.4.3",
+        "@opentui/solid": ">=0.4.3"
+      },
+      "peerMeta": {
+        "@opentui/core": {
+          "optional": true
+        },
+        "@opentui/keymap": {
+          "optional": true
+        },
+        "@opentui/solid": {
+          "optional": true
+        }
+      },
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-tqVBzhTHYUzO0laAmcQeBtT56tXYM5VGUk9V60O+cMx4kkSfac4qEfPVguCGUMJnfcU+u+EPvpME6xmHWoQE8w==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 69,
+      "fileManifestSHA256": "65ff119499be254a587d25663a26898796ffa59f547d4c94e6567614d8a53ec1",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "@ai-sdk/provider",
+      "expectedVersion": "3.0.8",
+      "installedVersion": "3.0.8",
+      "location": "node_modules/@ai-sdk/provider",
+      "runtime": {
+        "json-schema": "^0.4.0"
+      },
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-oGMAgGoQdBXbZqNG0Ze56CHjDZ1IDYOwGYxYjO5KLSlz5HiNQ9udIXsPZ61VWaHGZ5XW/jyjmr6t2xz2jGVwbQ==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 143,
+      "fileManifestSHA256": "11c9d7eab847fecdfaf9e8e87742c3792f11253004c2821b0ff80db37c456841",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "@opencode-ai/sdk",
+      "expectedVersion": "1.17.18",
+      "installedVersion": "1.17.18",
+      "location": "node_modules/@opencode-ai/sdk",
+      "runtime": {
+        "cross-spawn": "7.0.6"
+      },
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-c/C9PhY8PrbcxDY+JIYtOZsrmMD0KzoVvxq+RGUrZ6LQp57SuVBbT4lfwA2G8Se5RNC1N5JtYjiuaXeECnF2SQ==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 79,
+      "fileManifestSHA256": "f6be4d2097c6c8c914d6c00d4acafb9a61972c5eaf43c55cc80777bcb2bc0c93",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "effect",
+      "expectedVersion": "4.0.0-beta.83",
+      "installedVersion": "4.0.0-beta.83",
+      "location": "node_modules/effect",
+      "runtime": {
+        "@standard-schema/spec": "^1.1.0",
+        "fast-check": "^4.8.0",
+        "find-my-way-ts": "^0.1.6",
+        "ini": "^7.0.0",
+        "kubernetes-types": "^1.30.0",
+        "msgpackr": "^2.0.1",
+        "multipasta": "^0.2.7",
+        "toml": "^4.1.1",
+        "uuid": "^14.0.0",
+        "yaml": "^2.9.0"
+      },
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-0wsak8RtgGAr9UWSbVDgJHZcUqMSvicHcvaZv1MbMM7MCGgW4Rn/137J1MHQbwYPcwYGxT/IqehFd+UbYuj78w==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 2068,
+      "fileManifestSHA256": "eb8fbbd1fd6db31fb99271da2b117dcf56a37c6525af53f43af8ada2743e945d",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "zod",
+      "expectedVersion": "4.1.8",
+      "installedVersion": "4.1.8",
+      "location": "node_modules/zod",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-5R1P+WwQqmmMIEACyzSvo4JXHY5WiAFHRMg+zBZKgKS+Q1viRa0C1hmUKtHltoIFKtIdki3pRxkmpP74jnNYHQ==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 656,
+      "fileManifestSHA256": "3504f424b640c8f2ce814c2e44ddc5575da5ba39357eaef7cffec386c45fe5ab",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "json-schema",
+      "expectedVersion": "0.4.0",
+      "installedVersion": "0.4.0",
+      "location": "node_modules/json-schema",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 5,
+      "fileManifestSHA256": "c3cf88ced86f80b12b2a009c8f83f86f5af4356cd0296b573c4973c8b38aed1c",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "cross-spawn",
+      "expectedVersion": "7.0.6",
+      "installedVersion": "7.0.6",
+      "location": "node_modules/cross-spawn",
+      "runtime": {
+        "path-key": "^3.1.0",
+        "shebang-command": "^2.0.0",
+        "which": "^2.0.1"
+      },
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==",
+      "integrityEvidence": "SRI_TARBALL_PASS; 9 installed archive files matched; extra installed files only locally hashed",
+      "fileCount": 9,
+      "fileManifestSHA256": "b023bad084686cbac815c7369f5b00f5e6f772dd5048569c7c8e735ba192c9ee",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "@standard-schema/spec",
+      "expectedVersion": "1.1.0",
+      "installedVersion": "1.1.0",
+      "location": "node_modules/@standard-schema/spec",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 7,
+      "fileManifestSHA256": "063e1992ecafb5566f60bb0f2956136cd77372a147c491d6bcd1c273d6e3ce2a",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "fast-check",
+      "expectedVersion": "4.9.0",
+      "installedVersion": "4.9.0",
+      "location": "node_modules/fast-check",
+      "runtime": {
+        "pure-rand": "^8.0.0"
+      },
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-7ms6T7SybUev/PQITciI0yLM2pOSFy5zpG8Ty7tQofcVaQUvrMXp6CBwqF6fThLCLOrfBtuHAtwq6Yu4XPCllg==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 11,
+      "fileManifestSHA256": "1079738ebb868eb1b7044b74c88bacaaabf4173c33323cd8529d08f4246eb046",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "find-my-way-ts",
+      "expectedVersion": "0.1.6",
+      "installedVersion": "0.1.6",
+      "location": "node_modules/find-my-way-ts",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-a85L9ZoXtNAey3Y6Z+eBWW658kO/MwR7zIafkIUPUMf3isZG0NCs2pjW2wtjxAKuJPxMAsHUIP4ZPGv0o5gyTA==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 33,
+      "fileManifestSHA256": "86da225e5d660a4a9a99b8a688089596460ed01ced31bebbb4b6576965677c45",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "ini",
+      "expectedVersion": "7.0.0",
+      "installedVersion": "7.0.0",
+      "location": "node_modules/ini",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-ifK0CgjALofS5bkrcTy4RaQ9Vx2Knf/eLeIO+NaswQEpH1UblrtTSCIvN71qQDMq0PeQ/SSPojvEJp9vvvfr+w==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 4,
+      "fileManifestSHA256": "5f4fd2f37da5f0e138471ccb7d8db08985f01815d0946b2897a91a9ef50e1c6f",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "kubernetes-types",
+      "expectedVersion": "1.30.0",
+      "installedVersion": "1.30.0",
+      "location": "node_modules/kubernetes-types",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-Dew1okvhM/SQcIa2rcgujNndZwU8VnSapDgdxlYoB84ZlpAD43U6KLAFqYo17ykSFGHNPrg0qry0bP+GJd9v7Q==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 37,
+      "fileManifestSHA256": "2516b2bd1437c692a451b3a8d2d8edeed0c939f0566975efac2ce6a20bfa8b27",
+      "symlinks": [],
+      "typesOnly": true
+    },
+    {
+      "package": "msgpackr",
+      "expectedVersion": "2.0.4",
+      "installedVersion": "2.0.4",
+      "location": "node_modules/msgpackr",
+      "runtime": {},
+      "optional": {
+        "msgpackr-extract": "^3.0.4"
+      },
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-o1C5KRmuRt+apqMr1HuGSqWStZoRBUpEsCsl15uM9VdAF1qHLtvMOU2En747EnTyEl6c4pzPewRMFF31s1CNbA==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 33,
+      "fileManifestSHA256": "016e3b6598ebda9b2205455066476d0b977d8e308069466512bb80113e2aac2d",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "multipasta",
+      "expectedVersion": "0.2.8",
+      "installedVersion": "0.2.8",
+      "location": "node_modules/multipasta",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-ZPWuMKyv0cSO29f7hozp+k6+crZbQijV8ipMvxNxRf2SwtYGTX1ZX89Kd20VV4H9Znonx+EQn+iy1wGQsJ+b+Q==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 67,
+      "fileManifestSHA256": "1cffabf9e67f21858f3509fea73567144ad2716b1dbc2f37209c217aa6c92ce4",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "toml",
+      "expectedVersion": "4.1.2",
+      "installedVersion": "4.1.2",
+      "location": "node_modules/toml",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-m0vXfHODcw3gk+KONAOlVQ5yNHc3yS3B1ybM3HS1vqDoS0RWTDDVBVVTYi8hH0k+2OM1vmo9fb1WX9EVqjqfHA==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 7,
+      "fileManifestSHA256": "3be93ea746ad532774cdb20de565048bd63e46326017fe449c669ead27a6ebb8",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "uuid",
+      "expectedVersion": "14.0.1",
+      "installedVersion": "14.0.1",
+      "location": "node_modules/uuid",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-6ZxzVpzDXDa3bJWaHilVayA+BH/1zmxCJoVgvmqJnid/gPoKHxUrS/aC/T6LGQtNHT+XHG9fXPJB4d+IrU30Ew==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 70,
+      "fileManifestSHA256": "f47af49cfee88d9a1d44af003d793244ce63b552c448467cc0bb5f2385af874a",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "yaml",
+      "expectedVersion": "2.9.0",
+      "installedVersion": "2.9.0",
+      "location": "node_modules/yaml",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 233,
+      "fileManifestSHA256": "d678edc453de15f59e1307e363247d8212a6428f8e1cd2902e7554af11f8078c",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "path-key",
+      "expectedVersion": "3.1.1",
+      "installedVersion": "3.1.1",
+      "location": "node_modules/path-key",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==",
+      "integrityEvidence": "SRI_TARBALL_PASS; 5 installed archive files matched; extra installed files only locally hashed",
+      "fileCount": 5,
+      "fileManifestSHA256": "4e9041c8a74b7c494e7fd2418d2123a137fc3984459c05a9693b901c0315f629",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "shebang-command",
+      "expectedVersion": "2.0.0",
+      "installedVersion": "2.0.0",
+      "location": "node_modules/shebang-command",
+      "runtime": {
+        "shebang-regex": "^3.0.0"
+      },
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==",
+      "integrityEvidence": "SRI_TARBALL_PASS; 4 installed archive files matched; extra installed files only locally hashed",
+      "fileCount": 4,
+      "fileManifestSHA256": "9c656d6ba6816d886125e76a9db8a1207599c7e08a32b7257df8942aef494442",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "which",
+      "expectedVersion": "2.0.2",
+      "installedVersion": "2.0.2",
+      "location": "node_modules/which",
+      "runtime": {
+        "isexe": "^2.0.0"
+      },
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==",
+      "integrityEvidence": "SRI_TARBALL_PASS; 6 installed archive files matched; extra installed files only locally hashed",
+      "fileCount": 6,
+      "fileManifestSHA256": "e945946882eac4c0965d005ebc57c0eba858d3955d277f61d7a8f321aa6d3ac9",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "pure-rand",
+      "expectedVersion": "8.4.2",
+      "installedVersion": "8.4.2",
+      "location": "node_modules/pure-rand",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 58,
+      "fileManifestSHA256": "c612b7c49487267e58babdcfcf8e36148fc11fc6e6760696215eacf422993cdc",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "msgpackr-extract",
+      "expectedVersion": "3.0.4",
+      "installedVersion": "3.0.4",
+      "location": "node_modules/msgpackr-extract",
+      "runtime": {
+        "node-gyp-build-optional-packages": "5.2.2"
+      },
+      "optional": {
+        "@msgpackr-extract/msgpackr-extract-darwin-arm64": "3.0.4",
+        "@msgpackr-extract/msgpackr-extract-darwin-x64": "3.0.4",
+        "@msgpackr-extract/msgpackr-extract-linux-arm": "3.0.4",
+        "@msgpackr-extract/msgpackr-extract-linux-arm64": "3.0.4",
+        "@msgpackr-extract/msgpackr-extract-linux-x64": "3.0.4",
+        "@msgpackr-extract/msgpackr-extract-win32-x64": "3.0.4"
+      },
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": true,
+      "lockIntegrity": "sha512-4kmO/MdyUIkLIvTPr8VHLil4AtoKIoniWPIEk5+CDy0xnWC84azhSFmuJ7PxZdsYtiP5kEeQsORAVIeMgxT+Hw==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 7,
+      "fileManifestSHA256": "cfe058cb9f199b87d2d53021665cedfc48b7829bff05f452600ba510ca8bac55",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "shebang-regex",
+      "expectedVersion": "3.0.0",
+      "installedVersion": "3.0.0",
+      "location": "node_modules/shebang-regex",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==",
+      "integrityEvidence": "SRI_TARBALL_PASS; 5 installed archive files matched; extra installed files only locally hashed",
+      "fileCount": 5,
+      "fileManifestSHA256": "87c7da7104d5ca5cfdabd02c2ee0cb18d557abe302fac2f53e3407918fe2652a",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "isexe",
+      "expectedVersion": "2.0.0",
+      "installedVersion": "2.0.0",
+      "location": "node_modules/isexe",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==",
+      "integrityEvidence": "SRI_TARBALL_PASS; 8 installed archive files matched; extra installed files only locally hashed",
+      "fileCount": 8,
+      "fileManifestSHA256": "d71e6080763536f9c1a1e04fcde975d71964dfae1f4d60fd9950d642a0fc9e48",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "node-gyp-build-optional-packages",
+      "expectedVersion": "5.2.2",
+      "installedVersion": "5.2.2",
+      "location": "node_modules/node-gyp-build-optional-packages",
+      "runtime": {
+        "detect-libc": "^2.0.1"
+      },
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-s+w+rBWnpTMwSFbaE0UXsRlg7hU4FjekKU4eyAih5T8nJuNZT1nNsskXpxmeqSK9UzkBl6UgRlnKc8hz8IEqOw==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 8,
+      "fileManifestSHA256": "c844c46a9a0a496f0d278edb116dd211d49bc51db9c2e1e83c6cecc7d8d3e3d4",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "@msgpackr-extract/msgpackr-extract-linux-x64",
+      "expectedVersion": "3.0.4",
+      "installedVersion": "3.0.4",
+      "location": "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-8TNXMEjJc3QEy7R/x1INhgiU+XakDAFUzBhaz7+Rbrs8NH5UQeHQxxmzsSBJGyV6I1jW79undiQm8tOI+D+8FQ==",
+      "integrityEvidence": "NO_LOCAL_TARBALL: versions and local file hashes only",
+      "fileCount": 7,
+      "fileManifestSHA256": "ebae22b723e72adba45aba7b229b4f7f95b0ad5389421947dcb548314053abfb",
+      "symlinks": [],
+      "typesOnly": false
+    },
+    {
+      "package": "detect-libc",
+      "expectedVersion": "2.1.2",
+      "installedVersion": "2.1.2",
+      "location": "node_modules/detect-libc",
+      "runtime": {},
+      "optional": {},
+      "peers": {},
+      "peerMeta": {},
+      "installLifecycleDeclared": false,
+      "lockIntegrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
+      "integrityEvidence": "SRI_TARBALL_PASS; 8 installed archive files matched; extra installed files only locally hashed",
+      "fileCount": 8,
+      "fileManifestSHA256": "a48eec8d32dc0430fc61b61a56ccba78d8052678cdfd1daee38ce00ec43d7715",
+      "symlinks": [],
+      "typesOnly": false
+    }
+  ],
+  "missingRequired": [],
+  "absentOptional": [
+    {
+      "from": "node_modules/@opencode-ai/plugin",
+      "package": "@opentui/core",
+      "optional": true
+    },
+    {
+      "from": "node_modules/@opencode-ai/plugin",
+      "package": "@opentui/keymap",
+      "optional": true
+    },
+    {
+      "from": "node_modules/@opencode-ai/plugin",
+      "package": "@opentui/solid",
+      "optional": true
+    },
+    {
+      "from": "node_modules/msgpackr-extract",
+      "package": "@msgpackr-extract/msgpackr-extract-darwin-arm64",
+      "optional": true
+    },
+    {
+      "from": "node_modules/msgpackr-extract",
+      "package": "@msgpackr-extract/msgpackr-extract-darwin-x64",
+      "optional": true
+    },
+    {
+      "from": "node_modules/msgpackr-extract",
+      "package": "@msgpackr-extract/msgpackr-extract-linux-arm",
+      "optional": true
+    },
+    {
+      "from": "node_modules/msgpackr-extract",
+      "package": "@msgpackr-extract/msgpackr-extract-linux-arm64",
+      "optional": true
+    },
+    {
+      "from": "node_modules/msgpackr-extract",
+      "package": "@msgpackr-extract/msgpackr-extract-win32-x64",
+      "optional": true
+    }
+  ],
+  "edges": [
+    {
+      "from": "",
+      "name": "@opencode-ai/plugin",
+      "target": "node_modules/@opencode-ai/plugin"
+    },
+    {
+      "from": "node_modules/@opencode-ai/plugin",
+      "name": "@ai-sdk/provider",
+      "target": "node_modules/@ai-sdk/provider"
+    },
+    {
+      "from": "node_modules/@opencode-ai/plugin",
+      "name": "@opencode-ai/sdk",
+      "target": "node_modules/@opencode-ai/sdk"
+    },
+    {
+      "from": "node_modules/@opencode-ai/plugin",
+      "name": "effect",
+      "target": "node_modules/effect"
+    },
+    {
+      "from": "node_modules/@opencode-ai/plugin",
+      "name": "zod",
+      "target": "node_modules/zod"
+    },
+    {
+      "from": "node_modules/@ai-sdk/provider",
+      "name": "json-schema",
+      "target": "node_modules/json-schema"
+    },
+    {
+      "from": "node_modules/@opencode-ai/sdk",
+      "name": "cross-spawn",
+      "target": "node_modules/cross-spawn"
+    },
+    {
+      "from": "node_modules/effect",
+      "name": "@standard-schema/spec",
+      "target": "node_modules/@standard-schema/spec"
+    },
+    {
+      "from": "node_modules/effect",
+      "name": "fast-check",
+      "target": "node_modules/fast-check"
+    },
+    {
+      "from": "node_modules/effect",
+      "name": "find-my-way-ts",
+      "target": "node_modules/find-my-way-ts"
+    },
+    {
+      "from": "node_modules/effect",
+      "name": "ini",
+      "target": "node_modules/ini"
+    },
+    {
+      "from": "node_modules/effect",
+      "name": "kubernetes-types",
+      "target": "node_modules/kubernetes-types"
+    },
+    {
+      "from": "node_modules/effect",
+      "name": "msgpackr",
+      "target": "node_modules/msgpackr"
+    },
+    {
+      "from": "node_modules/effect",
+      "name": "multipasta",
+      "target": "node_modules/multipasta"
+    },
+    {
+      "from": "node_modules/effect",
+      "name": "toml",
+      "target": "node_modules/toml"
+    },
+    {
+      "from": "node_modules/effect",
+      "name": "uuid",
+      "target": "node_modules/uuid"
+    },
+    {
+      "from": "node_modules/effect",
+      "name": "yaml",
+      "target": "node_modules/yaml"
+    },
+    {
+      "from": "node_modules/cross-spawn",
+      "name": "path-key",
+      "target": "node_modules/path-key"
+    },
+    {
+      "from": "node_modules/cross-spawn",
+      "name": "shebang-command",
+      "target": "node_modules/shebang-command"
+    },
+    {
+      "from": "node_modules/cross-spawn",
+      "name": "which",
+      "target": "node_modules/which"
+    },
+    {
+      "from": "node_modules/fast-check",
+      "name": "pure-rand",
+      "target": "node_modules/pure-rand"
+    },
+    {
+      "from": "node_modules/msgpackr",
+      "name": "msgpackr-extract",
+      "target": "node_modules/msgpackr-extract"
+    },
+    {
+      "from": "node_modules/shebang-command",
+      "name": "shebang-regex",
+      "target": "node_modules/shebang-regex"
+    },
+    {
+      "from": "node_modules/which",
+      "name": "isexe",
+      "target": "node_modules/isexe"
+    },
+    {
+      "from": "node_modules/msgpackr-extract",
+      "name": "node-gyp-build-optional-packages",
+      "target": "node_modules/node-gyp-build-optional-packages"
+    },
+    {
+      "from": "node_modules/msgpackr-extract",
+      "name": "@msgpackr-extract/msgpackr-extract-linux-x64",
+      "target": "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64"
+    },
+    {
+      "from": "node_modules/node-gyp-build-optional-packages",
+      "name": "detect-libc",
+      "target": "node_modules/detect-libc"
+    }
+  ],
+  "scope": "Local runtime graph and resolution; no package code executed; no remote integrity claim without cached tarball",
+  "sourceResolution": {
+    "pass": true,
+    "edges": 32,
+    "typesOnly": [
+      "node_modules/kubernetes-types"
+    ]
+  },
+  "temporaryHome": {
+    "prepared": true,
+    "resolution": {
+      "pass": true,
+      "edges": 32,
+      "typesOnly": [
+        "node_modules/kubernetes-types"
+      ]
+    },
+    "removedOnExit": true,
+    "uid": 1000,
+    "mode": "0700",
+    "packageCount": 27
+  }
+}

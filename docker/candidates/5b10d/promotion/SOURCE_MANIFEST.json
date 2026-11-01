@@ -1,0 +1,21 @@
+{
+  "base": "b0c4f9b",
+  "sources": {
+    "docker/candidates/5b10d/HOME_INVENTORY.json": "9f1bb8a47e2f54e98a7a5f5afee633f4c483de81c8458d68025583fc48b31022",
+    "docker/candidates/5b10d/lab-open.test.py": "59e2985825e3f9ef39843db84fa743b11d50c2b53bd13531c9a5c6114f23fe77",
+    "docker/candidates/5b10d/gateway-launcher.mjs": "47567038036321c7eedd278dc44181b343a894eb0f0d760a9d219cd0dabc07c7",
+    "docker/candidates/5b10d/ROLLBACK.md": "df941c9768430e2fac073306df4e49c67c91b5fdc79a8875e774b317936b3769",
+    "docker/candidates/5b10d/README.md": "0a7dfeb43364f378bc1d28cf8141feeb3e5a59028e7fb255324063e51a61e5d3",
+    "docker/candidates/5b10d/lab-open": "fa7808b8dca85e5cd86c06d836e7928a1413523118f3df71d0a4ef022712e055",
+    "docker/candidates/5b10d/home-audit.py": "3edfc0335b6fe25c233035c54ef6eb20e89a49a8e1bddcefb1d4824dec6de696",
+    "docker/candidates/5b10d/gateway-launcher.test.mjs": "8bbcf005b4270ba2e42a333a387243989928ace0e8b7cbae245f9b05c5c9f3bb",
+    "docker/candidates/5b10d/validate-candidate.py": "22780295d1d8a80c006daafcd1156b1b063c1036b888f41f52bbcc720b3336c7",
+    "docker/candidates/5b10d/opencode.json": "081a42ec00eb9a92e0198392e2dde665802e09b22b03180849ee3e51808ced5f",
+    "docker/candidates/5b10d/compose.yaml": "6db41e862b12f8a167640ea4605add89c1dfe12197d2d47f2d4a536de905eb35",
+    "proyectos/lab-ia-web/server/opencode-gateway.js": "a6663640ccbb433a7992939e9f1bba17cb8a70aa48f86c348c8daa425648479d",
+    "proyectos/lab-ia-web/server/index.js": "ea8d21c87f542b6fc0d8c3358fd1c247dc8f626017fbed941d4bcc24aab4b946",
+    "agentes/agents/reviewer.md": "a605fe4617a2e7c93789993d0bad1cf43a6f55f1fb14cf6ef3d08b3787835772",
+    "proyectos/lab-ia-web/src/lab-api.js": "9e58042a2f804523be9d1348a5f62a0ca4ea88cb67e1486eb12351edf4211b51",
+    "proyectos/lab-ia-web/src/Viewer.jsx": "03fd0808d34ec14473c898cda32a6d7299ede17e2ad202365362101c3b5b4c56"
+  }
+}
