@@ -1,0 +1,60 @@
+--- a/docker/candidates/5b10d/promotion/BACKUP_PLAN.md
++++ b/docker/candidates/5b10d/promotion/BACKUP_PLAN.md
+@@ -1,0 +2,5 @@
++
++> Reconciliación requerida antes de ejecutar: consultar
++> [RUNBOOK_CORRECTIONS.md](../maintenance/RUNBOOK_CORRECTIONS.md).
++> Validar respaldo principal y complemento por separado, HOME existente y
++> barrera integrada; esta propuesta no autoriza cutover ni inferencia.
+--- a/docker/candidates/5b10d/promotion/CUTOVER.md
++++ b/docker/candidates/5b10d/promotion/CUTOVER.md
+@@ -1,0 +2,5 @@
++
++> Reconciliación requerida antes de ejecutar: consultar
++> [RUNBOOK_CORRECTIONS.md](../maintenance/RUNBOOK_CORRECTIONS.md).
++> Validar respaldo principal y complemento por separado, HOME existente y
++> barrera integrada; esta propuesta no autoriza cutover ni inferencia.
+@@ -18,0 +24,3 @@
++IFS= read -r -p 'Ruta absoluta del complemento de historial verificado: ' HISTORY_BACKUP_META_A
++test -d "$HISTORY_BACKUP_META_A"
++(cd "$HISTORY_BACKUP_META_A" && sha256sum -c SHA256SUMS && sha256sum -c PRECHECKS.sha256)
+@@ -31 +39,2 @@
+-python3 "$PKG_META_A/prepare_home.py" --prepare-new-home
++# HOME ya preparado: completar antes la auditoría de solo lectura descrita
++# en maintenance/RUNBOOK_CORRECTIONS.md. No ejecutar prepare_home.py de nuevo.
+--- a/docker/candidates/5b10d/promotion/ACCEPTANCE.md
++++ b/docker/candidates/5b10d/promotion/ACCEPTANCE.md
+@@ -1,0 +2,5 @@
++
++> Reconciliación requerida antes de ejecutar: consultar
++> [RUNBOOK_CORRECTIONS.md](../maintenance/RUNBOOK_CORRECTIONS.md).
++> Validar respaldo principal y complemento por separado, HOME existente y
++> barrera integrada; esta propuesta no autoriza cutover ni inferencia.
+@@ -16,0 +22,3 @@
++IFS= read -r -p 'Ruta absoluta del complemento de historial verificado: ' HISTORY_BACKUP_META_A
++test -d "$HISTORY_BACKUP_META_A"
++(cd "$HISTORY_BACKUP_META_A" && sha256sum -c SHA256SUMS && sha256sum -c PRECHECKS.sha256)
+@@ -18 +26 @@
+-HISTORY_META_A=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["historyFile"])' "$BACKUP_META_A/references.json")
++HISTORY_META_A=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["historyFile"])' "$HISTORY_BACKUP_META_A/references.json")
+@@ -174 +182 @@
+-cp -p -- "$BACKUP_META_A/config/recent-workspaces" "$HISTORY_META_A"
++cp -p -- "$HISTORY_BACKUP_META_A/config/recent-workspaces" "$HISTORY_META_A"
+--- a/docker/candidates/5b10d/promotion/ROLLBACK_PRODUCTION.md
++++ b/docker/candidates/5b10d/promotion/ROLLBACK_PRODUCTION.md
+@@ -1,0 +2,5 @@
++
++> Reconciliación requerida antes de ejecutar: consultar
++> [RUNBOOK_CORRECTIONS.md](../maintenance/RUNBOOK_CORRECTIONS.md).
++> Validar respaldo principal y complemento por separado, HOME existente y
++> barrera integrada; esta propuesta no autoriza cutover ni inferencia.
+@@ -16,0 +22,3 @@
++IFS= read -r -p 'Ruta absoluta del complemento de historial verificado: ' HISTORY_BACKUP_META_A
++test -d "$HISTORY_BACKUP_META_A"
++(cd "$HISTORY_BACKUP_META_A" && sha256sum -c SHA256SUMS && sha256sum -c PRECHECKS.sha256)
+@@ -21 +29 @@
+-HISTORY_META_A=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["historyFile"])' "$BACKUP_META_A/references.json")
++HISTORY_META_A=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["historyFile"])' "$HISTORY_BACKUP_META_A/references.json")
+@@ -67 +75 @@
+-cp -p -- "$BACKUP_META_A/config/recent-workspaces" "$HISTORY_META_A"
++cp -p -- "$HISTORY_BACKUP_META_A/config/recent-workspaces" "$HISTORY_META_A"

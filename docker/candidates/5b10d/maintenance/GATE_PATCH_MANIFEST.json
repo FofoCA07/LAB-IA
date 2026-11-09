@@ -1,0 +1,58 @@
+{
+  "base": "04e50657a20481440a32a5ea2e6490c80c6b1a84",
+  "patchSHA256": "ed4b6e93e4e6103819188b67c6ddb366ae4474fc0ff4d394ee8529f14e3222af",
+  "sources": {
+    "proyectos/lab-ia-web/server/workspace-routes.js": {
+      "oldSHA256": "9807a7371590d505ba764f832cc63d35900d6f177c78be68995ed46a97cd5203",
+      "newSHA256": "8fdd291847c04629a7e27ef6fdd8f3f585ee29cf031375ef5d2b4ea4f8269e4d"
+    },
+    "proyectos/lab-ia-web/server/chat-routes.js": {
+      "oldSHA256": "1df3239711d4e0a031f311c3ea7b311aecf1a2e23c5b788b83b88964c45c0338",
+      "newSHA256": "28ef7b0a29b522860b2e222bc5bb7b4b60c52430127711d54c30039b1ba8d654"
+    },
+    "proyectos/lab-ia-web/server/actions.js": {
+      "oldSHA256": "305d95c9db6cfca8e8fc777db1dd5999bccfaa2066916f5b418aa467f6b2f228",
+      "newSHA256": "f6ac04762807041c5b074bca5f65b72119ae847d8fa9ca8cae845c1177c0fdbe"
+    },
+    "proyectos/lab-ia-web/server/proposal-security.js": {
+      "oldSHA256": "1bd4cb18686f11e532360ccb57be70a9d43af6f2112cbd0fc809c4c135a88c77",
+      "newSHA256": "ea5e73707e748e4fcb4e3ec2f1eabbf757f6c96e545f09c514bea00e79a89a45"
+    },
+    "proyectos/lab-ia-web/server/chat-read-continuation.js": {
+      "oldSHA256": "02abc168e89ad694242e177d812747b408724df042a71472b52dbb02b7f62682",
+      "newSHA256": "c86ff0238f68a005b40e0b27246ca1b34eae4629102782ce2e593d411b7d2850"
+    },
+    "proyectos/lab-ia-web/server/ollama-warmup.js": {
+      "oldSHA256": "864f071e8bef45df3d23c24b51363869ba675e04fac40d696d9046bedac916dc",
+      "newSHA256": "fdace1f3b633436c622e3fe49a1dbd2d30e55b28ba263587798360e8153fd894"
+    },
+    "proyectos/lab-ia-web/server/index.js": {
+      "oldSHA256": "ea8d21c87f542b6fc0d8c3358fd1c247dc8f626017fbed941d4bcc24aab4b946",
+      "newSHA256": "77cf39049b7a4d6ee3e4c5209cb57535263a3709d078df9fd69f150615cd8f41"
+    },
+    "proyectos/lab-ia-web/server/maintenance/admission-gate.mjs": {
+      "oldSHA256": null,
+      "newSHA256": "b9bcf727faa2db88a79ba83e4080b2a8989acd16fd1458867310a53b1be353dd"
+    },
+    "proyectos/lab-ia-web/server/maintenance/backend-hooks.mjs": {
+      "oldSHA256": null,
+      "newSHA256": "e336c3f0722d042edb2a4156bf92cbc93f47b2adf3fa9b4f00fe17854f935d94"
+    },
+    "proyectos/lab-ia-web/server/maintenance/barrier.mjs": {
+      "oldSHA256": null,
+      "newSHA256": "62656140b7708abc2f17bffa816d80c6a270471b1f14a05a2c95b728d2f84855"
+    },
+    "proyectos/lab-ia-web/server/maintenance/private-store.mjs": {
+      "oldSHA256": null,
+      "newSHA256": "568a348871d310b1fd358f669e939bbb560a45105326937d702cfa81cc9ce0c8"
+    },
+    "proyectos/lab-ia-web/server/maintenance/local-control.mjs": {
+      "oldSHA256": null,
+      "newSHA256": "1036f980cf4bbe7ac5edfa363276f8ea21843c65ad45f9bf2a81a9208e2003d1"
+    },
+    "proyectos/lab-ia-web/server/maintenance/runtime.mjs": {
+      "oldSHA256": null,
+      "newSHA256": "b534989a3b51e0c81b38606db803ee5f565b2660d250c86dda94a99e6d43e318"
+    }
+  }
+}

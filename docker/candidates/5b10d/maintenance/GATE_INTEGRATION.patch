@@ -1,0 +1,839 @@
+diff --git a/proyectos/lab-ia-web/server/workspace-routes.js b/proyectos/lab-ia-web/server/workspace-routes.js
+index f5576fa..c858e90 100644
+--- a/proyectos/lab-ia-web/server/workspace-routes.js
++++ b/proyectos/lab-ia-web/server/workspace-routes.js
+@@ -16,7 +16,7 @@ function validActivationPath(path) {
+ // All external work is injected so tests never launch Docker/OpenCode or a workspace.
+ export function createPrivateWorkspaceRoutes({ securityStore, json, readRecentWorkspaces, stat,
+   inspectOpenCode, getOpenCodeStatus, queryOpenCode, workspaceSummaryConfig,
+-  inspectWorkspaceSnapshot, runWorkspaceSummary, runLabOpen, acquireActivationLock }) {
++  inspectWorkspaceSnapshot, runWorkspaceSummary, runLabOpen, acquireActivationLock, maintenance }) {
+   const guard = createSessionGuard(securityStore);
+   let activationInProgress = false;
+   let summaryInProgress = false;
+@@ -85,7 +85,7 @@ export function createPrivateWorkspaceRoutes({ securityStore, json, readRecentWo
+       return;
+     }
+     try {
+-      json(response, 200, await getOpenCodeStatus());
++      json(response, 200, await maintenance.statusProbe(() => getOpenCodeStatus(), () => getOpenCodeStatus({ checkCLI: false })));
+     } catch {
+       json(response, 500, { error: 'No se pudo consultar el estado de OpenCode.' });
+     }
+@@ -241,7 +241,8 @@ export function createPrivateWorkspaceRoutes({ securityStore, json, readRecentWo
+         if (path === '/api/opencode/workspace-summary' && (!body || typeof body !== 'object'
+           || Array.isArray(body) || Object.keys(body).length !== 0)) throw new AuthRequestError(400);
+       }
+-      await route.handle(request, response, body);
++      if (route.method === 'POST') await maintenance.dispatch(path.endsWith('/activate') ? 'activation' : 'summary', request, response, () => route.handle(request, response, body));
++      else await route.handle(request, response, body);
+     } catch (error) {
+       if (!response.headersSent && !response.destroyed) {
+         response.setHeader('Connection', 'close');
+diff --git a/proyectos/lab-ia-web/server/chat-routes.js b/proyectos/lab-ia-web/server/chat-routes.js
+index f58e40c..7755974 100644
+--- a/proyectos/lab-ia-web/server/chat-routes.js
++++ b/proyectos/lab-ia-web/server/chat-routes.js
+@@ -4,7 +4,7 @@ export const chatBodyLimits = Object.freeze({ conversation: 16 * 1024, message:
+ 
+ // This factory owns the complete HTTP boundary, with the same store as auth.
+ export function createPrivateChatRoutes({ store, database, chat, addUserMessage, json,
+-  checkAgents, listAgents, loadAgent }) {
++  checkAgents, listAgents, loadAgent, maintenance }) {
+   const guard = createSessionGuard(store);
+   const validId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+   async function conversations(request, response, path, body) {
+@@ -150,10 +150,15 @@ export function createPrivateChatRoutes({ store, database, chat, addUserMessage,
+         body = await readBoundedJson(request, { maxBytes });
+         guard(request); // Expiry/revocation can happen while the body is streaming.
+       }
++      const handle = async () => {
+       if (turn) chat.getTurn(request, response, turn[1], turn[2]);
+       else if (respond) await chat.respond(request, response, respond[1], body);
+       else if (path.startsWith('/api/agents')) await agents(request, response, path);
+       else await conversations(request, response, path, body);
++      };
++      const protectedPost = request.method === 'POST' && (path === '/api/conversations' || /^\/api\/conversations\/[^/]+\/messages$/.test(path) || respond);
++      if (protectedPost) await maintenance.dispatch(respond ? 'chat' : 'write', request, response, handle);
++      else await handle();
+     } catch (error) {
+       if (!response.headersSent && !response.destroyed) {
+         response.setHeader('Connection', 'close');
+diff --git a/proyectos/lab-ia-web/server/actions.js b/proyectos/lab-ia-web/server/actions.js
+index 8a7209a..9bbcf4f 100644
+--- a/proyectos/lab-ia-web/server/actions.js
++++ b/proyectos/lab-ia-web/server/actions.js
+@@ -3,7 +3,7 @@ import { createSessionGuard, readBoundedJson, AuthRequestError } from './securit
+ export const actionDecisionBodyLimit = 1024;
+ 
+ // HTTP exposes neither action creation nor private-result consumption.
+-export function createActionHandlers({ store, securityStore, json, onDecision = () => {} }) {
++export function createActionHandlers({ store, securityStore, json, onDecision = () => {}, maintenance }) {
+   const guard = createSessionGuard(securityStore);
+   function reject(request, response, error) {
+     if (response.headersSent || response.destroyed) return;
+@@ -34,12 +34,14 @@ export function createActionHandlers({ store, securityStore, json, onDecision =
+       if (request.url.includes('?')) throw new AuthRequestError(400);
+       const body = await readBoundedJson(request, { maxBytes: actionDecisionBodyLimit });
+       guard(request); // Expiry/logout during body streaming must not claim an action.
++      await maintenance.dispatch('action', request, response, async () => {
+       const result = await store.decide(body);
+       if (result.status === 200 || result.status === 422) {
+         // Notification carries only a server-validated ID, never the private read result.
+         onDecision(body.actionId);
+       }
+       return json(response, result.status, result.body);
++      });
+     } catch (error) { return reject(request, response, error); }
+   }
+   return Object.freeze({ list, decision });
+diff --git a/proyectos/lab-ia-web/server/proposal-security.js b/proyectos/lab-ia-web/server/proposal-security.js
+index 7674a81..55d0b48 100644
+--- a/proyectos/lab-ia-web/server/proposal-security.js
++++ b/proyectos/lab-ia-web/server/proposal-security.js
+@@ -5,9 +5,9 @@ import { validateApplyRequest } from './apply-change-proposal.js';
+ export const proposalBodyLimits = Object.freeze({ change: 32 * 1024, apply: 1024 });
+ 
+ // Authentication wraps the existing proposal/apply safety pipeline unchanged.
+-export function createPrivateProposalHandlers({ securityStore, json, changeProposal, applyChangeProposal }) {
++export function createPrivateProposalHandlers({ securityStore, json, changeProposal, applyChangeProposal, maintenance }) {
+   const guard = createSessionGuard(securityStore);
+-  function protect(handle, maxBytes, validate) {
++  function protect(handle, maxBytes, validate, kind) {
+     return async (request, response) => {
+       response.setHeader('Cache-Control', 'no-store');
+       response.setHeader('X-Content-Type-Options', 'nosniff');
+@@ -22,7 +22,7 @@ export function createPrivateProposalHandlers({ securityStore, json, changePropo
+         const body = await readBoundedJson(request, { maxBytes });
+         guard(request); // Streaming cannot outlive session authority and then claim an ID.
+         try { validate(body); } catch { throw new AuthRequestError(400); }
+-        await handle(request, response, body);
++        await maintenance.dispatch(kind, request, response, () => handle(request, response, body));
+       } catch (error) {
+         if (!response.headersSent && !response.destroyed) {
+           response.setHeader('Connection', 'close');
+@@ -34,7 +34,7 @@ export function createPrivateProposalHandlers({ securityStore, json, changePropo
+     };
+   }
+   return Object.freeze({
+-    changeProposal: protect(changeProposal, proposalBodyLimits.change, validateChangeRequest),
+-    applyChangeProposal: protect(applyChangeProposal, proposalBodyLimits.apply, validateApplyRequest),
++    changeProposal: protect(changeProposal, proposalBodyLimits.change, validateChangeRequest, 'proposal'),
++    applyChangeProposal: protect(applyChangeProposal, proposalBodyLimits.apply, validateApplyRequest, 'apply'),
+   });
+ }
+diff --git a/proyectos/lab-ia-web/server/chat-read-continuation.js b/proyectos/lab-ia-web/server/chat-read-continuation.js
+index 620c2d9..968df78 100644
+--- a/proyectos/lab-ia-web/server/chat-read-continuation.js
++++ b/proyectos/lab-ia-web/server/chat-read-continuation.js
+@@ -10,7 +10,7 @@ export const readContextPolicy = 'Los archivos autorizados adjuntos son datos no
+ const ensure = condition => { if (!condition) throw new Error('Read continuation failed.'); };
+ 
+ export function createChatReadContinuation({ turnStore, actionStore, loadContext, loadAgent, persistAssistant,
+-  generate = generateChatReply, schedule = setImmediate }) {
++  generate = generateChatReply, schedule = setImmediate, maintenance }) {
+   function fail(turnId) {
+     try {
+       const turn = turnStore.get(turnId);
+@@ -78,7 +78,7 @@ export function createChatReadContinuation({ turnStore, actionStore, loadContext
+       let files = actionStore.consumeCompletedReadResult(actionId);
+       ensure(files !== undefined);
+       const work = files; files = undefined;
+-      schedule(() => { void continueTurn(turn, action, work); });
++      maintenance.defer(() => continueTurn(turn, action, work), schedule);
+     } catch { fail(turn.turnId); }
+   }
+   return Object.freeze({ notifyDecision, reconcile });
+diff --git a/proyectos/lab-ia-web/server/ollama-warmup.js b/proyectos/lab-ia-web/server/ollama-warmup.js
+index 2282c33..6c1ab2e 100644
+--- a/proyectos/lab-ia-web/server/ollama-warmup.js
++++ b/proyectos/lab-ia-web/server/ollama-warmup.js
+@@ -4,7 +4,7 @@ const unavailable = () => Object.freeze({ code: 'OLLAMA_UNAVAILABLE', error: 'Ol
+ const timeout = () => Object.freeze({ code: 'OLLAMA_TIMEOUT', error: 'Ollama excedió el tiempo máximo.' });
+ 
+ export function createOllamaWarmup({ fetchImpl = globalThis.fetch, timeoutMs = 180_000,
+-  onState = () => {}, now = Date.now } = {}) {
++  onState = () => {}, now = Date.now, maintenance } = {}) {
+   let state = 'idle';
+   let pending;
+   let started = false;
+@@ -16,9 +16,10 @@ export function createOllamaWarmup({ fetchImpl = globalThis.fetch, timeoutMs = 1
+   function ensureReady() {
+     if (state === 'ready' && now() >= readyUntil) transition('idle');
+     if (state === 'loading' || state === 'ready') return pending;
++    const lease = maintenance.admitWarmup();
+     transition('loading');
+     // Defer execution so pending is assigned even for a synchronously failing fetch.
+-    pending = Promise.resolve().then(async () => {
++    pending = lease.run(async () => {
+       const controller = new AbortController();
+       let timer;
+       let response;
+@@ -74,7 +75,7 @@ export function createOllamaWarmup({ fetchImpl = globalThis.fetch, timeoutMs = 1
+     get state() { return state; },
+     ensureReady,
+     start() {
+-      if (!started) { started = true; return ensureReady(); }
++      if (!started) { const operation = ensureReady(); started = true; return operation; }
+       return pending;
+     },
+   });
+diff --git a/proyectos/lab-ia-web/server/index.js b/proyectos/lab-ia-web/server/index.js
+index 1e1e0bf..ac2e717 100644
+--- a/proyectos/lab-ia-web/server/index.js
++++ b/proyectos/lab-ia-web/server/index.js
+@@ -1,3 +1,5 @@
++import { openAdmissionRuntime } from './maintenance/runtime.mjs';
++import { generateChatReply } from './chat-ollama.js';
+ import { resolveRuntimePaths, requireRuntimeDatabase } from './runtime-paths.js';
+ import { createTurnStore } from './turn-store.js';
+ import { createSecurityStore } from './security-store.js';
+@@ -25,10 +27,6 @@ import { createActionStore } from './action-store.js';
+ import { createActionHandlers } from './actions.js';
+ import { createOllamaWarmup, waitForOllamaWarmup } from './ollama-warmup.js';
+ 
+-const ollamaWarmup = createOllamaWarmup({
+-  onState: (state) => console.log(`LAB-IA: Ollama warmup ${state}`),
+-});
+-
+ const proposalStore = createProposalStore();
+ const proposalLocks = createWorkspaceLocks();
+ const actionStore = createActionStore({ locks: proposalLocks,
+@@ -42,6 +40,17 @@ const serverDir = dirname(await realpath(fileURLToPath(import.meta.url)));
+ const labRoot = resolve(serverDir, '../../..');
+ const agentsDir = resolve(labRoot, 'agentes/agents');
+ const runtimePaths = await resolveRuntimePaths({ labRoot });
++const maintenanceRuntime = await openAdmissionRuntime({
++  directory: resolve(runtimePaths.runtimeDir, 'maintenance-control'), json,
++  operatorEnabled: process.env.LAB_MAINTENANCE_OPERATOR === '1',
++});
++const maintenance = maintenanceRuntime.hooks;
++const ollamaWarmup = createOllamaWarmup({ maintenance, fetchImpl: maintenance.trackedFetch(globalThis.fetch),
++  onState: (state) => console.log(`LAB-IA: Ollama warmup ${state}`),
++});
++
++
++const generateChat = args => generateChatReply(args, { fetchImpl: maintenance.trackedFetch(globalThis.fetch) });
+ const recentWorkspacesFile = runtimePaths.recentWorkspacesPath;
+ const labOpenPath = resolve(labRoot, 'scripts/lab-open');
+ const validId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+@@ -124,7 +133,7 @@ function inspectOpenCode() {
+ // Fixed, read-only Docker operations; no client input enters these arguments.
+ function queryOpenCode(args) {
+   return new Promise((resolveResult, reject) => {
+-    execFile('docker', args, {
++    const start = () => execFile('docker', args, {
+       shell: false, timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024,
+       encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' },
+     }, (error, stdout, stderr) => {
+@@ -134,6 +143,8 @@ function queryOpenCode(args) {
+         reject(Object.assign(new Error('OpenCode status query failed.'), { missing }));
+       } else resolveResult(stdout.trim());
+     });
++    if (args[0] === 'exec') maintenance.child(start, { remote: true });
++    else start();
+   });
+ }
+ 
+@@ -300,7 +311,7 @@ function parseWorkspaceSummary(stdout) {
+ 
+ function runWorkspaceSummary(snapshot) {
+   return new Promise((resolveResult, reject) => {
+-    const child = execFile('docker', ['exec', '-i', '--env', workspaceSummaryConfig,
++    const child = maintenance.child(() => execFile('docker', ['exec', '-i', '--env', workspaceSummaryConfig,
+       '--workdir', '/workspace', 'opencode',
+       'timeout', '-s', 'KILL', '110', 'opencode', 'run', '--pure',
+       '--dir', '/workspace', '--agent', 'reviewer', '--format', 'json', workspaceSummaryPrompt], {
+@@ -319,7 +330,7 @@ function runWorkspaceSummary(snapshot) {
+       try {
+         resolveResult(parseWorkspaceSummary(stdout));
+       } catch { reject(Object.assign(new Error('Invalid OpenCode response.'), { invalidSummary: true })); }
+-    });
++    }), { remote: true }).process;
+     // OpenCode run merges piped input with the fixed prompt. Use stdin rather
+     // than argv so the bounded snapshot cannot exceed Linux's per-argument limit.
+     child.stdin.on('error', () => { /* execFile reports process failure through its callback. */ });
+@@ -329,9 +340,9 @@ function runWorkspaceSummary(snapshot) {
+ 
+ function runLabOpen(workspacePath) {
+   return new Promise((resolveResult, reject) => {
+-    const child = spawn(labOpenPath, [workspacePath], {
++    const child = maintenance.child(() => spawn(labOpenPath, [workspacePath], {
+       cwd: labRoot, shell: false, stdio: 'ignore',
+-    });
++    }), { remote: true }).process;
+     let timedOut = false;
+     const timer = setTimeout(() => {
+       timedOut = true;
+@@ -361,20 +372,20 @@ const turnCleanup = setInterval(() => turns.cleanup(), 30_000);
+ turnCleanup.unref();
+ const requestReadPermission = createChatReadPermission({ actionStore, locks: proposalLocks,
+   getWorkspaceStatus: () => getOpenCodeStatus({ checkCLI: false }) });
+-const readContinuation = createChatReadContinuation({ turnStore: turns, actionStore,
+-  ...createChatPersistence(database), loadAgent: id => loadAgentInstructions(agentsDir, id) });
+-const chat = createChatHandler({ database, json, turns, requestReadPermission,
++const readContinuation = createChatReadContinuation({ maintenance, turnStore: turns, actionStore,
++  ...createChatPersistence(database), generate: generateChat, loadAgent: id => loadAgentInstructions(agentsDir, id) });
++const chat = createChatHandler({ generate: generateChat, database, json, turns, requestReadPermission,
+   reconcileReadTurn: readContinuation.reconcile, loadAgent: (id) => loadAgentInstructions(agentsDir, id) });
+ const addUserMessage = createPublicMessageHandler({ database, chat, json });
+ 
+ const securityStore = createSecurityStore();
+-const actions = createActionHandlers({ store: actionStore, securityStore, json, onDecision: readContinuation.notifyDecision });
++const actions = createActionHandlers({ maintenance, store: actionStore, securityStore, json, onDecision: readContinuation.notifyDecision });
+ const auth = createAuthHandler({ store: securityStore, json });
+-const privateProposals = createPrivateProposalHandlers({ securityStore, json, changeProposal, applyChangeProposal });
++const privateProposals = createPrivateProposalHandlers({ maintenance, securityStore, json, changeProposal, applyChangeProposal });
+ const securityCleanup = setInterval(() => securityStore.cleanup(), 30_000);
+ securityCleanup.unref();
+ 
+-const privateChat = createPrivateChatRoutes({ store: securityStore, database, chat, addUserMessage, json,
++const privateChat = createPrivateChatRoutes({ maintenance, store: securityStore, database, chat, addUserMessage, json,
+   checkAgents: checkAgentsDir,
+   loadAgent: id => loadAgentInstructions(agentsDir, id),
+   listAgents: async () => (await readdir(agentsDir, { withFileTypes: true }))
+@@ -384,7 +395,7 @@ const privateChat = createPrivateChatRoutes({ store: securityStore, database, ch
+     .sort((a, b) => a.filename.localeCompare(b.filename)),
+ });
+ 
+-const privateWorkspaces = createPrivateWorkspaceRoutes({ securityStore, json,
++const privateWorkspaces = createPrivateWorkspaceRoutes({ maintenance, securityStore, json,
+   readRecentWorkspaces: () => readFile(recentWorkspacesFile, 'utf8'), stat,
+   inspectOpenCode, getOpenCodeStatus, queryOpenCode, workspaceSummaryConfig,
+   inspectWorkspaceSnapshot, runWorkspaceSummary, runLabOpen,
+@@ -414,9 +425,12 @@ const server = createServer(async (request, response) => {
+ });
+ 
+ let pairingTerminal;
+-server.once('close', () => pairingTerminal?.close());
++server.once('close', () => {
++  pairingTerminal?.close();
++  void maintenanceRuntime.close().catch(() => console.error('LAB-IA: MAINTENANCE_CLOSE_FAILED'));
++});
+ server.listen(3001, '127.0.0.1', () => {
+   pairingTerminal = attachPairingTerminal({ securityStore, input: process.stdin, output: process.stdout });
+   console.log('LAB-IA: servidor local en http://127.0.0.1:3001');
+-  void ollamaWarmup.start();
++  if (maintenanceRuntime.status().state === 'NORMAL') void ollamaWarmup.start();
+ });
+diff --git a/proyectos/lab-ia-web/server/maintenance/admission-gate.mjs b/proyectos/lab-ia-web/server/maintenance/admission-gate.mjs
+new file mode 100644
+index 0000000..d1d981b
+--- /dev/null
++++ b/proyectos/lab-ia-web/server/maintenance/admission-gate.mjs
+@@ -0,0 +1,24 @@
++// Thin candidate adapter. Reuses the existing state machine and lifecycle hooks.
++// No Docker, HTTP admin endpoint, default path, remote verifier or auto-reopening.
++import { createBackendHooks } from './backend-hooks.mjs';
++import { openLocalControl } from './local-control.mjs';
++
++export function createAdmissionGate({ barrier, json } = {}) {
++  if (!barrier || typeof json !== 'function'
++    || !['status', 'admit', 'drain', 'confirm', 'reopen', 'recover'].every(key => typeof barrier[key] === 'function')) {
++    throw new TypeError('EXISTING_BARRIER_REQUIRED');
++  }
++  const hooks = createBackendHooks(barrier, json);
++  return Object.freeze({
++    hooks,
++    status() {
++      return { ...barrier.status(), scope: 'BACKEND_TRACKED_OPERATIONS_ONLY',
++        remoteExclusivity: 'NOT_VERIFIED' };
++    },
++    openControl({ directory, authorize = () => false } = {}) {
++      // The caller supplies an explicitly private directory. No diagnostics or
++      // force-clear/reconcile command is added to the existing control protocol.
++      return openLocalControl({ directory, barrier, authorize });
++    },
++  });
++}
+diff --git a/proyectos/lab-ia-web/server/maintenance/backend-hooks.mjs b/proyectos/lab-ia-web/server/maintenance/backend-hooks.mjs
+new file mode 100644
+index 0000000..f4be817
+--- /dev/null
++++ b/proyectos/lab-ia-web/server/maintenance/backend-hooks.mjs
+@@ -0,0 +1,117 @@
++// Candidate integration hooks. No Docker client, network destination or credentials.
++import { AsyncLocalStorage } from 'node:async_hooks';
++import { failure } from './barrier.mjs';
++
++export function createBackendHooks(barrier, json) {
++  const context = new AsyncLocalStorage();
++  function current() {
++    const job = context.getStore(); if (!job) throw failure('MISSING_ADMISSION'); return job;
++  }
++  async function own(job, callback) {
++    return context.run(job, async () => {
++      try { return await callback(); }
++      finally { job.finish(); }
++    });
++  }
++  function run(kind, callback) { return own(barrier.admit(kind), callback); }
++  async function dispatch(kind, request, response, callback) {
++    let job;
++    try { job = barrier.admit(kind); }
++    catch (error) {
++      if (!['ADMISSION_CLOSED', 'PERSISTENCE_FAILED', 'DISPOSED', 'CAPACITY'].includes(error.code)) throw error;
++      if (!response.destroyed && !response.headersSent) {
++        response.setHeader('Cache-Control', 'no-store');
++        json(response, 503, { success: false, code: 'MAINTENANCE', error: 'Servicio temporalmente no disponible.' });
++      }
++      return;
++    }
++    return own(job, callback); // Never free tickets on request/response close.
++  }
++  function track(callback, type = 'promise') {
++    const job = current(); const hold = job.hold(type);
++    return Promise.resolve().then(callback).finally(() => hold.finish());
++  }
++  function defer(callback, schedule) {
++    const job = current(); const hold = job.hold('deferred');
++    try {
++      schedule(() => {
++        void context.run(job, async () => {
++          try { await callback(); }
++          catch { job.mark('OPERATION_FAILED'); }
++          finally { hold.finish(); }
++        }).catch(() => { /* Persistence fault remains observable and closed. */ });
++      });
++    } catch (error) { hold.finish(); throw error; }
++  }
++  function admitWarmup() {
++    const job = barrier.admit('warmup'); // Own shared job; admission precedes scheduling/fetch.
++    return Object.freeze({ run: callback => own(job, () => Promise.resolve().then(callback)) });
++  }
++  function child(start, { remote = false, verifyRemote, events = () => {} } = {}) {
++    const job = current(); const reservation = job.hold('process');
++    let process; let tracking;
++    const emit = type => { try { events(type); } catch { /* Metadata observer only. */ } };
++    try {
++      process = start(); tracking = job.trackChild(process, { remote, verifyRemote });
++    } catch (error) { job.mark('PROCESS_ERROR'); reservation.finish(); throw error; }
++    reservation.finish(); emit('start');
++    const done = new Promise(resolve => {
++      process.once('exit', () => emit('exit'));
++      process.once('close', (code, signal) => { emit('close'); resolve({ code, signal }); });
++    });
++    function interrupt(code, signal) {
++      job.mark(code); emit(code === 'TIMEOUT' ? 'timeout' : 'cancel');
++      if (!process.kill(signal)) return false;
++      return true; // Successful signal delivery is NOT completion evidence.
++    }
++    return Object.freeze({ process, done, tracking,
++      timeout: () => interrupt('TIMEOUT', 'SIGTERM'), cancel: () => interrupt('UNCERTAIN', 'SIGTERM') });
++  }
++  function trackedFetch(fetchImpl) {
++    if (typeof fetchImpl !== 'function') throw failure('FETCH_REQUIRED');
++    return async (...args) => {
++      const job = current(); const hold = job.hold('remote'); let settled = false;
++      const signal = args[1]?.signal;
++      const interrupted = () => { if (!settled) { try { job.mark('UNCERTAIN'); } catch { /* Remains closed. */ } } };
++      const release = () => { if (!settled) { settled = true; signal?.removeEventListener('abort', interrupted); hold.finish(); } };
++      const uncertain = () => { if (settled) return; try { job.mark('UNCERTAIN'); } finally { release(); } };
++      try {
++        signal?.addEventListener('abort', interrupted, { once: true });
++        if (signal?.aborted) throw failure('FETCH_ABORTED');
++        const response = await fetchImpl(...args);
++        if (!response.body) { uncertain(); return response; }
++        const body = response.body;
++        const wrapped = {
++          getReader(...options) {
++            const reader = body.getReader(...options);
++            // A cancelled reader also resolves closed: only read().done is EOF.
++            void reader.closed.catch(uncertain).catch(() => {});
++            return new Proxy(reader, { get(target, key) {
++              if (key === 'read') return async (...readArgs) => {
++                try { const value = await target.read(...readArgs); if (value.done) release(); return value; }
++                catch (error) { uncertain(); throw error; }
++              };
++              if (key === 'cancel') return (...cancelArgs) => { uncertain(); return target.cancel(...cancelArgs); };
++              const value = Reflect.get(target, key, target);
++              return typeof value === 'function' ? value.bind(target) : value;
++            } });
++          },
++          cancel(...options) {
++            return body.cancel(...options).then(uncertain, uncertain);
++          },
++          get locked() { return body.locked; },
++        };
++        return new Proxy(response, { get(target, key) {
++          if (key === 'body') return wrapped;
++          const value = Reflect.get(target, key, target);
++          return typeof value === 'function' ? value.bind(target) : value;
++        } });
++      } catch (error) { uncertain(); throw error; }
++    };
++  }
++  function statusProbe(withCLI, inspectOnly) {
++    if (barrier.status().state !== 'NORMAL' || barrier.status().recoveryRequired) return inspectOnly();
++    return run('probe', withCLI);
++  }
++  return Object.freeze({ run, dispatch, track, defer, admitWarmup, child, trackedFetch, statusProbe });
++}
+diff --git a/proyectos/lab-ia-web/server/maintenance/barrier.mjs b/proyectos/lab-ia-web/server/maintenance/barrier.mjs
+new file mode 100644
+index 0000000..4017659
+--- /dev/null
++++ b/proyectos/lab-ia-web/server/maintenance/barrier.mjs
+@@ -0,0 +1,182 @@
++// Candidate only. Trusted backend hooks supply lifecycle evidence, never HTTP input.
++import { EventEmitter } from 'node:events';
++
++export const KINDS = Object.freeze(['summary', 'activation', 'chat', 'continuation',
++  'proposal', 'apply', 'action', 'write', 'warmup', 'probe',
++  'admin-health', 'admin-reviewer', 'admin-summary', 'admin-workspace']);
++const RESOURCES = new Set(['process', 'remote', 'deferred', 'promise']);
++const CODES = new Set(['TIMEOUT', 'PROCESS_ERROR', 'OPERATION_FAILED', 'UNCERTAIN']);
++export function failure(code) { return Object.assign(new Error(code), { code }); }
++
++export function createBarrier({ store, verifyRecovery = async () => false,
++  verifyUncertain = async () => false } = {}) {
++  if (!store?.load || !store?.save) throw failure('STORE_REQUIRED');
++  const events = new EventEmitter();
++  const jobs = new Map();
++  let sequence = 0;
++  let state = 'DRAINING';
++  let recoveryRequired = true;
++  let fault = null;
++  let lastError = null;
++  let disposed = false;
++  let recoveryRunning = false;
++  const recovered = store.load(); // Corruption must abort initialization, not reset state.
++  if (recovered !== null) {
++    if (recovered.version !== 1 || !['NORMAL', 'DRAINING', 'MAINTENANCE'].includes(recovered.state)
++      || !Number.isSafeInteger(recovered.sequence) || recovered.sequence < 0
++      || !Array.isArray(recovered.jobs) || recovered.jobs.length > 256) throw failure('INVALID_STATE');
++    sequence = recovered.sequence;
++    for (const item of recovered.jobs) {
++      if (!/^j[1-9][0-9]*$/.test(item.id) || !KINDS.includes(item.kind)
++        || jobs.has(item.id) || Number(item.id.slice(1)) > sequence) throw failure('INVALID_STATE');
++      jobs.set(item.id, { id: item.id, kind: item.kind, recovered: true,
++        rootDone: false, uncertain: true, resources: new Map() });
++    }
++    // Every boot starts DRAINING, including a previous MAINTENANCE checkpoint.
++    // Historical state never substitutes for fresh termination evidence.
++  }
++  function status() {
++    return { state, recoveryRequired, fault, lastError, active: jobs.size,
++      jobs: [...jobs.values()].map(j => ({ id: j.id, kind: j.kind,
++        rootDone: j.rootDone, uncertain: j.uncertain, recovered: j.recovered,
++        resources: [...j.resources.values()] })) };
++  }
++  function save() {
++    try {
++      store.save({ version: 1, state, sequence,
++        jobs: [...jobs.values()].map(({ id, kind }) => ({ id, kind })) });
++    } catch {
++      state = 'DRAINING'; fault = 'PERSISTENCE_FAILED';
++      events.emit('change'); throw failure(fault);
++    }
++    events.emit('change');
++  }
++  function usable() { if (disposed || fault) throw failure(fault ?? 'DISPOSED'); }
++  function ready() { usable(); if (recoveryRequired || jobs.size) throw failure('NOT_DRAINED'); }
++  function drain() { usable(); state = 'DRAINING'; save(); return status(); }
++  function confirm() {
++    ready(); if (state !== 'DRAINING') throw failure('BAD_STATE');
++    state = 'MAINTENANCE'; save(); return status();
++  }
++  function reopen() {
++    ready(); if (state !== 'MAINTENANCE') throw failure('BAD_STATE');
++    state = 'NORMAL'; save(); return status();
++  }
++  function ticket(kind, administrative = false) {
++    usable();
++    if (!KINDS.includes(kind) || kind.startsWith('admin-') !== administrative) throw failure('INVALID_KIND');
++    if (recoveryRequired || (administrative ? state !== 'MAINTENANCE' || jobs.size : state !== 'NORMAL')) {
++      throw failure('ADMISSION_CLOSED');
++    }
++    if (jobs.size >= 256 || sequence >= Number.MAX_SAFE_INTEGER) throw failure('CAPACITY');
++    if (administrative) state = 'DRAINING'; // Never report maintenance while a diagnostic is active.
++    const j = { id: `j${++sequence}`, kind, recovered: false, rootDone: false,
++      uncertain: false, resources: new Map() };
++    jobs.set(j.id, j);
++    save(); // Durable registration before the caller can start work. No await in admission.
++    let resourceSequence = 0;
++    function settle() {
++      if (j.rootDone && !j.resources.size && !j.uncertain) jobs.delete(j.id);
++      save();
++    }
++    function mark(code) {
++      usable(); if (!CODES.has(code)) throw failure('INVALID_CODE');
++      if (!jobs.has(j.id)) throw failure('JOB_FINISHED');
++      lastError = code;
++      if (code !== 'OPERATION_FAILED') { j.uncertain = true; state = 'DRAINING'; }
++      save();
++    }
++    function hold(type) {
++      usable();
++      // A previously reserved deferred operation can acquire its own resources
++      // after HTTP/root completion. It cannot resurrect a finished job.
++      if (!RESOURCES.has(type) || !jobs.has(j.id)
++        || (j.rootDone && !j.resources.size)) throw failure('INVALID_RESOURCE');
++      const id = ++resourceSequence; j.resources.set(id, type); save();
++      let finished = false;
++      return Object.freeze({ finish() {
++        if (finished) return false;
++        usable(); finished = true; j.resources.delete(id); settle(); return true;
++      } });
++    }
++    return Object.freeze({ id: j.id, hold, mark,
++      finish() {
++        if (j.rootDone) return false;
++        usable(); j.rootDone = true; settle(); return true;
++      },
++      // Call immediately after spawn, before returning to the event loop.
++      // A Docker/shell client requires a remote verifier as well as local close.
++      trackChild(child, { remote = false, verifyRemote = async () => false } = {}) {
++        const process = hold('process');
++        const upstream = remote ? hold('remote') : null;
++        let closed = false;
++        async function verifyRemoteCompletion() {
++          if (!remote || !closed) throw failure('REMOTE_NOT_CLOSED');
++          try {
++            if (await verifyRemote() !== true) { mark('UNCERTAIN'); return false; }
++            upstream.finish(); return true;
++          } catch { try { mark('UNCERTAIN'); } catch { /* Fault remains closed. */ } return false; }
++        }
++        child.once('error', () => { try { mark('PROCESS_ERROR'); } catch { /* Fault remains closed. */ } });
++        child.once('close', () => {
++          closed = true;
++          try { process.finish(); } catch { return; }
++          if (remote) void verifyRemoteCompletion();
++        });
++        return Object.freeze({ verifyRemoteCompletion });
++      },
++    });
++  }
++  async function recover() {
++    usable();
++    if (!recoveryRequired || recoveryRunning) throw failure('BAD_STATE');
++    recoveryRunning = true;
++    try {
++      if (await verifyRecovery(status()) !== true) throw failure('RECOVERY_REQUIRED');
++      usable();
++      if ([...jobs.values()].some(j => !j.recovered)) throw failure('NOT_DRAINED');
++      jobs.clear(); recoveryRequired = false; save(); return status();
++    } catch (error) {
++      lastError = error.code === 'PERSISTENCE_FAILED' ? error.code : 'RECOVERY_REQUIRED';
++      throw failure(lastError);
++    } finally { recoveryRunning = false; }
++  }
++  async function reconcileJob(id) {
++    usable(); const j = jobs.get(id);
++    if (!j || j.recovered || !j.rootDone || j.resources.size || !j.uncertain) throw failure('NOT_RECONCILABLE');
++    if (await verifyUncertain({ id: j.id, kind: j.kind }) !== true) throw failure('UNCERTAIN');
++    usable(); if (jobs.get(id) !== j) throw failure('JOB_CHANGED');
++    j.uncertain = false; jobs.delete(id); save(); return status();
++  }
++  function waitForDrain({ timeoutMs = 1000, signal } = {}) {
++    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000) return Promise.reject(failure('INVALID_TIMEOUT'));
++    return new Promise((resolve, reject) => {
++      let timer;
++      const cleanup = () => { clearTimeout(timer); events.off('change', check); signal?.removeEventListener('abort', abort); };
++      const abort = () => { cleanup(); reject(failure('WAIT_ABORTED')); };
++      const check = () => {
++        if (fault || disposed) { cleanup(); reject(failure(fault ?? 'DISPOSED')); }
++        else if (state !== 'NORMAL' && !jobs.size && !recoveryRequired) { cleanup(); resolve(status()); }
++      };
++      timer = setTimeout(() => { cleanup(); reject(failure('WAIT_TIMEOUT')); }, timeoutMs);
++      events.on('change', check); signal?.addEventListener('abort', abort, { once: true });
++      if (signal?.aborted) abort(); else check();
++    });
++  }
++  async function runAdministrative(kind, callback) {
++    const job = ticket(kind, true);
++    try { await callback(job); }
++    catch { job.mark('OPERATION_FAILED'); throw failure('DIAGNOSTIC_FAILED'); }
++    finally { job.finish(); }
++    return status(); // Caller must confirm again; unfinished resources remain visible.
++  }
++  save();
++  return Object.freeze({ status, drain, confirm, reopen, recover, reconcileJob, waitForDrain,
++    admit: kind => ticket(kind), runAdministrative,
++    close() {
++      if (disposed) return;
++      try { if (!fault) { state = 'DRAINING'; save(); } }
++      finally { disposed = true; events.emit('change'); store.close?.(); }
++    },
++  });
++}
+diff --git a/proyectos/lab-ia-web/server/maintenance/private-store.mjs b/proyectos/lab-ia-web/server/maintenance/private-store.mjs
+new file mode 100644
+index 0000000..8cc9578
+--- /dev/null
++++ b/proyectos/lab-ia-web/server/maintenance/private-store.mjs
+@@ -0,0 +1,61 @@
++// No default production path. Only a dedicated, explicitly supplied private directory.
++import fs from 'node:fs';
++import path from 'node:path';
++import { randomUUID } from 'node:crypto';
++import { failure } from './barrier.mjs';
++
++export function assertPrivateDirectory(directory) {
++  if (!path.isAbsolute(directory) || path.resolve(directory) !== directory
++    || fs.realpathSync(directory) !== directory) throw failure('UNSAFE_DIRECTORY');
++  const s = fs.lstatSync(directory);
++  if (!s.isDirectory() || s.uid !== process.getuid() || (s.mode & 0o777) !== 0o700) throw failure('UNSAFE_DIRECTORY');
++}
++function privateFile(file) {
++  const s = fs.lstatSync(file);
++  if (!s.isFile() || s.isSymbolicLink() || s.nlink !== 1 || s.uid !== process.getuid()
++    || (s.mode & 0o777) !== 0o600 || s.size > 65536) throw failure('UNSAFE_STATE');
++}
++export function openPrivateStore(directory) {
++  assertPrivateDirectory(directory);
++  const state = path.join(directory, 'state.json');
++  const lock = path.join(directory, 'owner.lock');
++  const lockFD = fs.openSync(lock, 'wx', 0o600); // Never automatically remove a stale/live owner lock.
++  fs.writeFileSync(lockFD, String(process.pid)); fs.fsyncSync(lockFD);
++  let closed = false;
++  const ownLock = fs.fstatSync(lockFD);
++  const check = () => {
++    if (closed) throw failure('STORE_CLOSED');
++    assertPrivateDirectory(directory);
++    const current = fs.lstatSync(lock);
++    if (current.ino !== ownLock.ino || current.dev !== ownLock.dev) throw failure('OWNER_CHANGED');
++  };
++  return Object.freeze({
++    load() {
++      check();
++      try { privateFile(state); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
++      return JSON.parse(fs.readFileSync(state, 'utf8'));
++    },
++    save(value) {
++      check();
++      try { privateFile(state); } catch (error) { if (error.code !== 'ENOENT') throw error; }
++      const temporary = path.join(directory, `.state-${randomUUID()}`);
++      const fd = fs.openSync(temporary, 'wx', 0o600);
++      try {
++        const data = JSON.stringify(value) + '\n';
++        if (Buffer.byteLength(data) > 65536) throw failure('STATE_TOO_LARGE');
++        fs.writeFileSync(fd, data); fs.fsyncSync(fd);
++        fs.renameSync(temporary, state);
++        const dirFD = fs.openSync(directory, 'r');
++        try { fs.fsyncSync(dirFD); } finally { fs.closeSync(dirFD); }
++      } finally {
++        fs.closeSync(fd);
++        if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
++      }
++    },
++    close() {
++      if (closed) return;
++      try { check(); fs.unlinkSync(lock); }
++      finally { closed = true; fs.closeSync(lockFD); }
++    },
++  });
++}
+diff --git a/proyectos/lab-ia-web/server/maintenance/local-control.mjs b/proyectos/lab-ia-web/server/maintenance/local-control.mjs
+new file mode 100644
+index 0000000..261fd8d
+--- /dev/null
++++ b/proyectos/lab-ia-web/server/maintenance/local-control.mjs
+@@ -0,0 +1,77 @@
++// Candidate JSON-lines control; no TCP listener, shell, Docker or public HTTP API.
++import net from 'node:net';
++import fs from 'node:fs';
++import path from 'node:path';
++import { assertPrivateDirectory } from './private-store.mjs';
++import { failure } from './barrier.mjs';
++
++export async function openLocalControl({ directory, barrier, authorize = () => false,
++  diagnostics = {} }) {
++  const socketPath = path.join(directory, 'control.sock');
++  const closeAdmission = () => { try { barrier.drain(); } catch { /* Already fail-closed. */ } };
++  try {
++    assertPrivateDirectory(directory);
++    if (Buffer.byteLength(socketPath) > 100) throw failure('UNSAFE_SOCKET');
++    try { fs.lstatSync(socketPath); throw failure('UNSAFE_SOCKET'); }
++    catch (error) { if (error.code !== 'ENOENT') throw error; }
++  } catch (error) { closeAdmission(); throw error; }
++  const sockets = new Set();
++  const server = net.createServer(socket => {
++    if (sockets.size >= 4) { socket.destroy(); return; }
++    sockets.add(socket); socket.once('close', () => sockets.delete(socket));
++    socket.setTimeout(2000, () => socket.destroy());
++    socket.on('error', () => {});
++    let data = Buffer.alloc(0); let used = false;
++    socket.on('data', chunk => {
++      if (used) { socket.destroy(); return; }
++      data = Buffer.concat([data, chunk]);
++      if (data.length > 1024) { socket.destroy(); return; }
++      const newline = data.indexOf(10);
++      if (newline < 0) return;
++      used = true;
++      void (async () => {
++        try {
++          const request = JSON.parse(data.toString('utf8'));
++          if (!request || Array.isArray(request) || Object.keys(request).some(k => !['command', 'kind'].includes(k))
++            || !['status', 'drain', 'confirm', 'reopen', 'recover', 'diagnostic'].includes(request.command)
++            || (request.command !== 'diagnostic' && 'kind' in request)) throw failure('INVALID_COMMAND');
++          if (await authorize(request.command) !== true) throw failure('UNAUTHORIZED');
++          let result;
++          if (request.command === 'diagnostic') {
++            if (!['admin-health', 'admin-reviewer', 'admin-summary', 'admin-workspace'].includes(request.kind)
++              || !Object.hasOwn(diagnostics, request.kind) || typeof diagnostics[request.kind] !== 'function') throw failure('DIAGNOSTIC_UNAVAILABLE');
++            result = await barrier.runAdministrative(request.kind, diagnostics[request.kind]);
++          } else result = await barrier[request.command]();
++          socket.end(JSON.stringify({ ok: true, status: result }) + '\n');
++        } catch (error) {
++          const allowed = ['UNAUTHORIZED', 'INVALID_COMMAND', 'ADMISSION_CLOSED', 'NOT_DRAINED',
++            'BAD_STATE', 'RECOVERY_REQUIRED', 'DIAGNOSTIC_UNAVAILABLE', 'DIAGNOSTIC_FAILED', 'PERSISTENCE_FAILED'];
++          socket.end(JSON.stringify({ ok: false, code: allowed.includes(error.code) ? error.code : 'CONTROL_FAILED' }) + '\n');
++        }
++      })();
++    });
++  });
++  // Private 0700 directory already restricts access during the bind/chmod interval.
++  try {
++    await new Promise((resolve, reject) => {
++      server.once('error', reject); server.listen(socketPath, resolve);
++    });
++    fs.chmodSync(socketPath, 0o600);
++  } catch (error) {
++    closeAdmission();
++    if (server.listening) await new Promise(resolve => server.close(resolve));
++    throw error;
++  }
++  const identity = fs.lstatSync(socketPath);
++  server.on('error', () => { try { barrier.drain(); } catch { /* Already fail-closed. */ } });
++  server.once('close', () => { try { barrier.drain(); } catch { /* Already fail-closed. */ } });
++  return Object.freeze({ socketPath, async close() {
++    for (const socket of sockets) socket.destroy();
++    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
++    // Node may remove its own socket on close. Never delete a substituted resource.
++    try {
++      const current = fs.lstatSync(socketPath);
++      if (current.ino === identity.ino && current.dev === identity.dev && current.isSocket()) fs.unlinkSync(socketPath);
++    } catch (error) { if (error.code !== 'ENOENT') throw error; }
++  } });
++}
+diff --git a/proyectos/lab-ia-web/server/maintenance/runtime.mjs b/proyectos/lab-ia-web/server/maintenance/runtime.mjs
+new file mode 100644
+index 0000000..11473c2
+--- /dev/null
++++ b/proyectos/lab-ia-web/server/maintenance/runtime.mjs
+@@ -0,0 +1,24 @@
++// Candidate bootstrap. Closed on every boot; no auto-recover/reopen.
++import { createBarrier } from './barrier.mjs';
++import { openPrivateStore } from './private-store.mjs';
++import { createAdmissionGate } from './admission-gate.mjs';
++export async function openAdmissionRuntime({ directory, json, operatorEnabled = false }) {
++  let store; let barrier; let control; let closing;
++  try {
++    store = openPrivateStore(directory); // Must already exist privately; never create/overwrite.
++    barrier = createBarrier({ store,
++      verifyRecovery: async status => status.jobs.length === 0 });
++    const gate = createAdmissionGate({ barrier, json });
++    control = await gate.openControl({ directory,
++      authorize: command => operatorEnabled === true && ['status', 'drain', 'confirm', 'recover', 'reopen'].includes(command) });
++    return Object.freeze({ hooks: gate.hooks, status: gate.status, barrier, control,
++      close() {
++        return closing ??= (async () => {
++          try { await control.close(); } finally { barrier.close(); }
++        })();
++      } });
++  } catch {
++    try { if (barrier) barrier.close(); else store?.close(); } catch { /* Preserve state/fault. */ }
++    throw Object.assign(new Error('MAINTENANCE_STARTUP_FAILED'), { code: 'MAINTENANCE_STARTUP_FAILED' });
++  }
++}
