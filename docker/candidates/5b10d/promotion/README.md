@@ -1,8 +1,19 @@
-# META A — PREPARADO — NO DESPLEGADO
+# META A — PREPARADO — NO DESPLEGADO — RECONCILIACIÓN 5B.11B
 
-Paquete de 5B.10I sobre HEAD `b0c4f9b`. No autoriza cutover. Ningún comando
-operativo de estos documentos se ejecutó al prepararlo. No hay script de cutover
-integral: cada puerta exige revisión y autorización posterior.
+Configuración preparada en 5B.10I sobre HEAD `b0c4f9b`; documentos reconciliados
+con [5B.11A](../META_A_OPERATIONAL_READINESS_5B11A.md) y la
+[decisión histórica](../maintenance/META_A_DECISION_5B10V.md).
+**OPCIÓN B — NO-GO PRODUCTIVO.** No se ejecutan procedimientos en 5B.11B.
+No hay script integral: cada puerta exige revisión y autorización posterior.
+GATE_INTEGRATION.patch y la variante 5B.10U permanecen RECHAZADOS; barrera
+completa NO AUTORIZADA. El contrato remoto sigue siendo insuficiente para
+certificar toda la descendencia. No instalar experimentos de maintenance/.
+
+**Integridad pendiente:** los cambios documentales de 5B.11B alteran hashes
+incluidos en MANIFEST.sha256. El manifiesto histórico y SOURCE_MANIFEST.json
+se conservan sin cambios. El verificador dará FAIL hasta una actualización
+revisada y autorizada por separado; no omitirlo ni recalcular hashes para
+ocultar diferencias. El paquete no está habilitado para aplicación.
 
 ## Contenido y rutas definitivas
 
@@ -12,7 +23,7 @@ integral: cada puerta exige revisión y autorización posterior.
 | files/docker/opencode.json | docker/opencode.json | Sustituir con OpenCode detenido |
 | files/scripts/lab-open | scripts/lab-open | Sustituir, modo 0755; mismo contrato de un argumento |
 | files/docker/gateway-launcher.mjs | docker/gateway-launcher.mjs | Nuevo archivo RO para el servicio |
-| prepare_home.py | No se instala como servicio | Paso administrativo único, solo con autorización |
+| prepare_home.py | No se instala como servicio | Preparación histórica ya realizada; NO repetir sobre el HOME existente |
 | snapshot.py | No se instala como servicio | Solo metadata; salida privada fuera de Git |
 
 No se copia ni modifica `proyectos/lab-ia-web/server/opencode-gateway.js`.
@@ -24,14 +35,14 @@ de instalación. Los snapshots de instalación evitan editar activos al preparar
 Las herramientas administrativas sí contrastan las fuentes candidatas auditadas:
 conservarlas durante la intervención. No se montan en los contenedores.
 
-Rutas host propuestas (no creadas en esta fase):
+Rutas de instalación propuestas y estado ya preparado:
 
-- Raíz: `/home/adolf/LAB-IA`; proyecto Compose `docker`.
-- HOME nuevo: `${HOME}/.local/share/lab-ia-opencode/home-meta-a`, persistente RW.
+- Raíz: raíz verificada del repositorio; proyecto Compose `docker`.
+- HOME sanitizado: `${HOME}/.local/share/lab-ia-opencode/home-meta-a`, ya existente; futuro bind persistente RW. Validarlo, no recrearlo.
 - HOME anterior: conservar el Source real del mount `/home/adolf` del baseline.
 - Workspace: Source explícito `LAB_WORKSPACE`, siempre bind RO.
 - Agentes: `agentes/agents`, RO; configuración: `docker/opencode.json`, RO.
-- Backups: `${HOME}/.local/state/lab-ia-meta-a/backups/<fecha-UTC>`, fuera de Git.
+- Respaldos: principal y complemento de historial existentes, privados y fuera de Git. Selección explícita desde el registro del operador, sin publicar rutas. Evidencia nueva siempre separada.
 - Logs Gateway: driver Docker `local`, máximo 3 × 1 MiB, solo metadata segura.
   No se agrega bind de logs. Estado propio de OpenCode vive solo en HOME nuevo.
 - Backend, SQLite privada, SSH, credenciales, Ollama y volumen `ollama`: intactos.
@@ -65,7 +76,7 @@ NO DETERMINADA. No se reproducen pruebas de red o inferencia en 5B.10I.
 Desde una terminal WSL del operador UID/GID 1000:1000. En cada terminal:
 
 ```bash
-ROOT_META_A=/home/adolf/LAB-IA
+ROOT_META_A=$(git rev-parse --show-toplevel)
 PKG_META_A="$ROOT_META_A/docker/candidates/5b10d/promotion"
 NEW_HOME_META_A="$HOME/.local/share/lab-ia-opencode/home-meta-a"
 cd "$ROOT_META_A"
@@ -101,19 +112,36 @@ del Engine. Muestras históricas no garantizan RAM libre durante carga de Ollama
 Exigir margen host/VM suficiente observado para cargar qwen3:8b y Gateway,
 sin OOM ni swapping incompatible; incertidumbre o presión de RAM = NO-GO.
 
-## Puertas de decisión
+## Puertas de decisión — secuencia de CUTOVER
 
-1. Paquete revisado, runtime local sin discrepancias y autorización explícita.
-2. Respaldo verificable y HOME nuevo preparado sin tocar el anterior.
-3. Gateway preparado/healthy y GET administrativos correctos, Ollama intacto.
-4. Ventana exclusiva: ningún cliente podrá iniciar summary, activación o CLI.
-   No se verificó una API de mantenimiento del backend. El operador debe poder
-   garantizar el drenaje con su mecanismo operativo existente; si no, NO-GO.
-5. Solo entonces parar/recrear OpenCode y aplicar [CUTOVER.md](CUTOVER.md).
-6. [ACCEPTANCE.md](ACCEPTANCE.md) completo o [rollback](ROLLBACK_PRODUCTION.md).
+| Etapa | Condición y alcance |
+|---|---|
+| A | Preflight/autorización; validar ambos respaldos existentes y su vigencia, HOME preparado, paquete íntegro, imágenes locales y recursos |
+| B | Cierre técnico de todas las admisiones: frontend, 3001 directo, clientes y productores externos. Actualmente NO-GO |
+| C | Conciliar trabajos admitidos, diferidos, hijos locales y remotos incompatibles. Inventario incompleto o incertidumbre: NO-GO |
+| D | Solo con B/C PASS, parada controlada del backend y control de relanzamiento |
+| E | Preparar y validar Gateway; luego interrumpir/recrear exclusivamente OpenCode y sustituir configuración autorizada |
+| F | Aceptación estructural/funcional, inferencias autorizadas, recursos y recuperación del workspace. Backend/warmup solo con acceso administrativo exclusivo demostrado |
+| G | Rollback ante fallo o reapertura humana tras aceptación completa; nunca reapertura automática |
 
-Un exit 0 no sustituye los invariantes. Parar ante listener upstream, bypass,
+El backend observado en 5B.11A arranca con npm desde terminal. No observar
+supervisor no excluye relanzadores externos. Debe demostrarse control antes de
+parar; un PID histórico o una espera no bastan. Detener backend, terminar HTTP
+o recibir exit/close del cliente Docker no certifica terminación remota.
+No usar docker top como prueba suficiente de ausencia de descendientes.
+
+Muestra 5B.11A en reposo: WSL disponible 7,47 GiB; backend RSS 76,7 MiB;
+OpenCode 517,4 MiB; Ollama 106,7 MiB. No son máximos. Pico qwen3:8b pendiente;
+256 MiB/0,5 CPU del Gateway es presupuesto propuesto, no validación bajo carga.
+No inferir capacidad ni sumar reservas WSL/Docker. Exigir una medición futura
+expresamente autorizada, con criterios y monitorización aprobados previamente.
+
+Un exit 0 no sustituye invariantes. Parar ante listener upstream, bypass,
 mount privado, pérdida de isolated, provider incorrecto o cambio en Ollama.
+Los ensayos temporales no son aceptación productiva. Respaldos verificados no
+significan rollback productivo ejecutado. Consultar [BACKUP_PLAN](BACKUP_PLAN.md),
+[CUTOVER](CUTOVER.md), [ACCEPTANCE](ACCEPTANCE.md) y
+[ROLLBACK_PRODUCTION](ROLLBACK_PRODUCTION.md) por sus puertas.
 
 ## Riesgos aceptados y pendientes
 
@@ -129,24 +157,13 @@ Persisten 20 paquetes con versiones/hashes locales sin tarball SRI contrastado;
 solo 7 tuvieron contraste SRI. No afirmar autenticidad criptográfica completa.
 Un rollback no recupera el ID/StartedAt anterior de OpenCode ni una sesión activa.
 
-## Validación estática de este paquete
+## Validación documental 5B.11B
 
-Usar un TMPDIR bajo candidatos para las fixtures; borrarlo específicamente al
-terminar. No ejecutar prepare_home.py --prepare-new-home en una validación.
-
-```bash
-ROOT_META_A=/home/adolf/LAB-IA
-PKG_META_A="$ROOT_META_A/docker/candidates/5b10d/promotion"
-cd "$ROOT_META_A"
-mkdir -p "$PKG_META_A/.validation-work"
-TMPDIR="$PKG_META_A/.validation-work" python3 "$PKG_META_A/test_package.py"
-node --test docker/candidates/5b10d/gateway-launcher.test.mjs
-python3 docker/candidates/5b10d/home-audit.py
-bash -n "$PKG_META_A/files/scripts/lab-open"
-node --check "$PKG_META_A/files/docker/gateway-launcher.mjs"
-rmdir "$PKG_META_A/.validation-work"
-git diff --check
-```
-
-La auditoría HOME sin flags no copia ni modifica inventario. Tests con shims
-no invocan Docker productivo; Compose config es exclusivamente un parser.
+Solo verificaciones de lectura: whitespace, Markdown, referencias, inventario y
+verificador de hashes previamente auditado. No ejecutar preparadores, tests con
+fixtures ni scripts de promoción para esta corrección documental. No se modifica
+código, Compose, launcher, provider, promotion/files/ ni maintenance/.
+Git se administra manualmente por el usuario; solo comandos de lectura.
+La discrepancia documental del manifiesto se informa, no se corrige en esta fase.
+Antes de cualquier uso futuro, obtener autorización separada para revisar y
+actualizar los hashes documentales y exigir de nuevo el verificador PASS.

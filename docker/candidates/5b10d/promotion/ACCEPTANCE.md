@@ -1,21 +1,60 @@
-# Aceptación productiva futura — PREPARADO — NO EJECUTADO
+# Aceptación productiva futura — RECONCILIADO 5B.11B — NO EJECUTADO
 
-Puerta previa: CUTOVER completado hasta OpenCode nuevo, ventana exclusiva,
-baseline/respaldo legibles, permiso para los GET y la única inferencia sintética.
+**META A — NO-GO PRODUCTIVO.** Puerta previa futura: CUTOVER A–E aprobado,
+paquete con integridad revisada, OpenCode nuevo, cierre técnico mantenido y
+operaciones incompatibles conciliadas. Ambas fuentes de respaldo deben estar
+legibles y vigentes, HOME validado y criterios de recursos aprobados.
+No se autoriza ninguna ejecución en 5B.11B.
+
+Presupuesto propuesto: exactamente DOS invocaciones principales con generación
+real en Ollama, ambas autorizadas previamente: una CLI instrumentada y una por
+backend. Un workspace sintético no convierte la inferencia en mock. GET,
+startup/warmup, acceso administrativo y carga adicional requieren alcance explícito.
+Si solo se autoriza una medición preliminar, eso no es aceptación completa.
+Sin retries manuales; 429 internos recuperados pueden aceptarse con evidencia.
 Cada criterio debe tener ID, esperado, observado y PASS/FAIL. Un criterio sin
 evidencia se registra NO VERIFICADO y bloquea aceptación. No ampliar límites.
+
+## Dominios de aceptación separados
+
+| Dominio | Evidencia productiva futura requerida |
+|---|---|
+| Estructura | Configuración efectiva, imágenes por digest, mounts, provider, modelo y hardening previstos |
+| Disponibilidad | Gateway healthy y alcanzable exclusivamente por su interfaz frontal |
+| HTTP/SSE | Status, contrato de denegaciones, finalización de streams y [DONE]; HTTP 200 inicial no basta |
+| Ollama real | Destino local existente confirmado, GET permitidos y generación autorizada con qwen3:8b; sin cambiar servicio/modelos |
+| Reviewer/parser | Exit 0, parser real PASS, tools=false/permission=deny, sin herramientas ejecutadas ni errores no recuperados |
+| Aislamiento | FRONT exclusiva/isolated, sin bypass ensayado, listener Gateway no accesible por UPSTREAM |
+| Persistencia | Ambos HOME preservados, solo estado técnico nuevo esperado en HOME nuevo; workspace RO, historial restaurado, modelos/volumen y SQLite original conservados |
+| Rendimiento/memoria | Duración, memoria disponible/pico, swap, OOM/reinicios e impacto en servicios; no inferir capacidad de cifras en reposo |
+| Recuperación | A→B→A y retorno original con invariantes; rollback productivo solo si se ejecuta y verifica expresamente |
+
+Los ensayos temporales históricos no satisfacen por sí solos esta tabla.
+NIVEL 2 estricto no declarado; egress Gateway, DNS general, forwarding e Internet
+de Ollama mantienen los límites documentados. No se garantiza todo agente.
+
+Para probar HTTP del backend tras CUTOVER D, autorizar su arranque por el mecanismo
+verificado y el warmup asociado. El cierre técnico a terceros debe continuar
+operativo con el backend arrancado. Si no se puede demostrar, detener aceptación:
+no reabrir servicio general para probarlo. Conservar autenticación/CSRF existentes.
+No usar barreras ni parches T/U rechazados para rellenar esta condición.
 
 ## Variables e invariantes de red antes del reviewer
 
 ```bash
-ROOT_META_A=/home/adolf/LAB-IA
+ROOT_META_A=$(git rev-parse --show-toplevel)
 PKG_META_A="$ROOT_META_A/docker/candidates/5b10d/promotion"
 COMPOSE_META_A="$ROOT_META_A/docker/docker-compose.yml"
 NEW_HOME_META_A="$HOME/.local/share/lab-ia-opencode/home-meta-a"
-IFS= read -r -p 'Ruta absoluta del respaldo verificado: ' BACKUP_META_A
+IFS= read -r -p 'Directorio absoluto del principal verificado: ' BACKUP_META_A
+IFS= read -r -p 'Directorio absoluto del complemento del historial: ' HISTORY_BACKUP_META_A
 test -d "$BACKUP_META_A"
+test -d "$HISTORY_BACKUP_META_A"
+(cd "$BACKUP_META_A" && sha256sum --status -c SHA256SUMS)
+(cd "$HISTORY_BACKUP_META_A" && sha256sum --status -c SHA256SUMS)
+(cd "$HISTORY_BACKUP_META_A" && sha256sum --status -c PRECHECKS.sha256)
 WORKSPACE_ORIGINAL_META_A=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["workspace"])' "$BACKUP_META_A/references.json")
-HISTORY_META_A=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["historyFile"])' "$BACKUP_META_A/references.json")
+HISTORY_META_A=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["historyFile"])' "$HISTORY_BACKUP_META_A/references.json")
 export LAB_WORKSPACE="$WORKSPACE_ORIGINAL_META_A"
 export LAB_OPENCODE_HOME="$NEW_HOME_META_A"
 cd "$ROOT_META_A"
@@ -91,7 +130,10 @@ no prueba bloqueo universal. DNS externo/forwarding quedan separados y pendiente
 
 ## Preparar workspaces sintéticos, sin leer los privados
 
-Con historial respaldado y ventana exclusiva, preparar A/B fuera del repositorio:
+Con historial vigente verificado en el complemento y cierre técnico mantenido,
+confirmar historyFile efectivo del backend y referencias coherentes con el principal
+según BACKUP_PLAN. Preparar A/B fuera del repositorio solo tras autorización;
+los cambios de historial aquí deben limitarse a estas dos rutas sintéticas:
 
 ```bash
 FIXTURE_ROOT_META_A="$HOME/.local/state/lab-ia-meta-a/acceptance"
@@ -112,7 +154,7 @@ automática de allowlist por lab-open. Confirmar que el runtime es el mismo del
 backend y mantener su entorno relevante al ejecutar el script. Registrar nuevo
 ID OpenCode y conservar Gateway ID/StartedAt. Verificar NET-01–08 otra vez.
 
-## Reviewer único, parser real y backend
+## Dos invocaciones autorizadas, parser real y backend
 
 `accept_reviewer.py` es un paso independiente, no un script de cutover. Exige
 el workspace A exacto y sus dos contenidos sintéticos, aplica tools=false y
@@ -168,16 +210,46 @@ Destination/Type/RW/Source ordenados; nunca por orden del array. No aceptar solo
 exit 0. Ante un fallo, parar antes del siguiente paso y proceder a rollback.
 
 Restaurar historial original respaldado y workspace original, sin tocar archivos
-de ninguno de los proyectos privados:
+de ninguno de los proyectos privados. Antes de restaurar, confirmar que no hubo
+cambios concurrentes legítimos y que el delta del historial contiene únicamente
+las rutas sintéticas autorizadas; no descartar entradas ajenas para forzar PASS.
+El complemento ya debía contener la ruta original:
 
 ```bash
-cp -p -- "$BACKUP_META_A/config/recent-workspaces" "$HISTORY_META_A"
+python3 - "$HISTORY_BACKUP_META_A" "$HISTORY_META_A" <<'PY'
+import json,sys,shutil,os,hashlib
+from pathlib import Path
+h,destination=map(Path,sys.argv[1:])
+r=json.loads((h/'references.json').read_text())
+v=json.loads((h/'history-verification.json').read_text())
+source=h/'config/recent-workspaces'
+assert str(destination)==r['historyFile']==v['originalPath']
+assert not source.is_symlink() and not destination.is_symlink()
+assert hashlib.sha256(source.read_bytes()).hexdigest()==v['sha256']
+assert (v['originalUid'],v['originalGid'])==(os.getuid(),os.getgid())
+shutil.copyfile(source,destination)
+os.chmod(destination,int(v['originalMode'],8))
+assert hashlib.sha256(destination.read_bytes()).hexdigest()==v['sha256']
+PY
 "$ROOT_META_A/scripts/lab-open" "$WORKSPACE_ORIGINAL_META_A"
 ```
 
-El respaldo ya debía contener esa ruta. Revalidar invariantes. Los fixtures se
+Revalidar invariantes. Los fixtures se
 retiran específicamente solo cuando dejaron de estar montados y el cierre fue
 aceptado; nunca borrar directorios deducidos sin verificar identidad.
+
+## Persistencia y protección de datos
+
+DAT-01: comparar referencias/mounts de ambos HOME antes/después; el anterior no
+se usa para el agente nuevo ni se importa a él. No borrar el estado nuevo para
+ocultar anomalías. Clasificar escrituras técnicas esperadas del HOME nuevo,
+rechazando credenciales importadas o dependencias descargadas inesperadamente.
+DAT-02: workspace original intacto y RO, historial igual al complemento después
+de retirar solo las entradas sintéticas autorizadas, volumen/modelos de Ollama
+conservados y backend/SQLite sin sustitución ni migración. No exigir hashes
+constantes de bases que legítimamente reciben escrituras autorizadas: conciliar
+los efectos esperados sin inspeccionar/publicar sesiones o datos privados.
+Una discrepancia no explicada bloquea aceptación y exige conservar evidencia.
 
 ## Regresión HTTP y recursos
 
@@ -210,18 +282,28 @@ permanecer iguales durante las cinco denegaciones, con ninguna otra petición
 activa. Falta de observabilidad = NO VERIFICADO. No atribuir tráfico externo
 que no pueda observarse ni medir bloqueo mediante operaciones peligrosas reales.
 
+Métricas históricas 5B.11A en reposo: WSL disponible 7,47 GiB, backend RSS
+76,7 MiB, OpenCode 517,4 MiB y Ollama 106,7 MiB. No son máximos; pico de inferencia
+qwen3:8b pendiente. Presupuesto Gateway 256 MiB/0,5 CPU propuesto, sin validación
+de carga. Renovar medidas antes de la prueba y aprobar margen, umbrales de parada,
+muestreo de pico/swap/OOM/reinicios y duración; no sumar reservas WSL/Docker.
+Los umbrales preliminares de 5B.11A requieren aprobación, no garantizan capacidad.
+Si falta esa aprobación u observabilidad, NO-GO antes de generar carga.
+
 RES-01: Gateway mantiene Memory=268435456/NanoCpus=500000000, sin OOM/reinicios
 y sin presión incompatible en host/VM. Registrar muestras y pico de cgroup con
 su intervalo; un pico después de reiniciar no es el pico de toda la intervención.
 
 ## Cierre o reversión
 
-Aceptar META A solo si NET, FUN, activación, SEC y RES están completos y ambas
+Aceptar META A solo si NET, FUN, DAT, activación, SEC y RES están completos y ambas
 invocaciones aprobadas terminaron correctamente. Cualquier bypass o cambio
 inesperado en Ollama = NO-GO. Una autorización más acotada no habilita a ampliar
 el número de inferencias ni a declarar cobertura del backend no ensayada.
 
-Guardar metadata final en el backup privado, revisar Git/diff y comparar Ollama
-y otras aplicaciones. Conservar HOME anterior, backup, volumen e imágenes.
+Guardar metadata final en evidencia privada nueva y exclusiva, fuera de Git;
+no escribir en el principal ni en el complemento históricos. Revisar Git solo en
+lectura y comparar Ollama y otras aplicaciones. Reabrir únicamente tras aceptación
+completa o rollback verificado y autorización humana expresa; nunca automáticamente. Conservar HOME anterior, backup, volumen e imágenes.
 No afirmar egress estricto, DNS cerrado universal, forwarding controlado,
 Internet de Ollama aislado ni NIVEL 2 completo. No commit/push sin autorización.
